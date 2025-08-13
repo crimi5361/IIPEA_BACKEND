@@ -317,37 +317,77 @@ exports.getEtudiantsByDepartement = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    // REQUÊTE CORRIGÉE AVEC LES BONS NOMS DE TABLES/COLONNES
+    let whereClauses = ['e.departement_id = $1'];
+    const params = [departementId];
+
+    if (req.query.filiere) {
+      whereClauses.push('f.nom = $' + (params.length + 1));
+      params.push(req.query.filiere);
+    }
+    if (req.query.niveau) {
+      whereClauses.push('n.libelle = $' + (params.length + 1));
+      params.push(req.query.niveau);
+    }
+    if (req.query.statut) {
+      whereClauses.push('e.standing = $' + (params.length + 1));
+      params.push(req.query.statut);
+    }
+
+    const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
+
     const dataQuery = `
       SELECT 
-        e.id as etudiant_id,
-        e.code_unique as code_unique,
-        e.nom as etudiant_nom,
+        e.id,
+        e.matricule,
+        e.nom,
         e.prenoms,
+        e.date_naissance,
+        e.lieu_naissance,
+        e.telephone,
+        e.lieu_residence,
+        e.contact_parent,
+        e.code_unique,
+        e.annee_bac,
+        e.serie_bac,
+        e.statut_scolaire,
+        e.etablissement_origine,
+        e.inscrit_par,
+        e.date_inscription,
+        e.nationalite,
+        e.standing,
+        e.numero_table,
+        e.sexe,
+        e.contact_etudiant,
+        e.contact_parent_2,
+        e.matricule_iipea,
         f.nom as filiere,
         f.sigle as filiere_sigle,
         n.libelle as niveau,
         a.annee as annee_academique,
-        a.etat as etat_annee,
-        e.telephone,
-        e.email as etudiant_email
+        d.nom as departement
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
-      JOIN anneeacademique a ON e.annee_academique_id = a.id  /* Note: 'anneeacademique' en un seul mot */
-      WHERE e.departement_id = $1
+      JOIN anneeacademique a ON e.annee_academique_id = a.id
+      JOIN departement d ON e.departement_id = d.id
+      ${whereClause}
       ORDER BY e.nom ASC, e.prenoms ASC
-      LIMIT $2 OFFSET $3
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
     const countQuery = `
-      SELECT COUNT(*) FROM etudiant e
-      WHERE e.departement_id = $1
+      SELECT COUNT(*) 
+      FROM etudiant e
+      JOIN filiere f ON e.id_filiere = f.id
+      JOIN niveau n ON e.niveau_id = n.id
+      ${whereClause}
     `;
 
+    const queryParams = [...params, limit, offset];
+
     const [dataResult, countResult] = await Promise.all([
-      db.query(dataQuery, [departementId, limit, offset]),
-      db.query(countQuery, [departementId])
+      db.query(dataQuery, queryParams),
+      db.query(countQuery, params)
     ]);
 
     return res.status(200).json({
@@ -360,6 +400,61 @@ exports.getEtudiantsByDepartement = async (req, res) => {
 
   } catch (err) {
     console.error("Erreur récupération étudiants:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Erreur serveur",
+      code: "SERVER_ERROR",
+      details: err.message
+    });
+  }
+};
+
+exports.getEtudiantById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const query = `
+      SELECT 
+        e.*,
+        f.nom as filiere,
+        f.sigle as filiere_sigle,
+        n.libelle as niveau,
+        a.annee as annee_academique,
+        d.nom as departement,
+        u.nom as inscrit_par_nom,
+        u.prenoms as inscrit_par_prenoms
+      FROM etudiant e
+      JOIN filiere f ON e.id_filiere = f.id
+      JOIN niveau n ON e.niveau_id = n.id
+      JOIN anneeacademique a ON e.annee_academique_id = a.id
+      JOIN departement d ON e.departement_id = d.id
+      LEFT JOIN utilisateur u ON e.inscrit_par = u.id
+      WHERE e.id = $1
+    `;
+
+    const result = await db.query(query, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Étudiant non trouvé",
+        code: "STUDENT_NOT_FOUND"
+      });
+    }
+
+    const etudiant = result.rows[0];
+    // Formater le nom de la personne qui a inscrit l'étudiant
+    if (etudiant.inscrit_par_nom) {
+      etudiant.inscrit_par = `${etudiant.inscrit_par_nom} ${etudiant.inscrit_par_prenoms}`;
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: etudiant
+    });
+
+  } catch (err) {
+    console.error("Erreur récupération étudiant:", err);
     return res.status(500).json({
       success: false,
       error: "Erreur serveur",
