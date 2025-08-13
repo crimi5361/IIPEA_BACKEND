@@ -1,0 +1,70 @@
+const express = require('express');
+const cors = require('cors');
+require('dotenv').config();
+const bodyParser = require('body-parser');
+const path = require('path');
+
+const app = express();
+
+// Configuration CORS améliorée
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Authorization', 'Content-Disposition']
+};
+
+// Middlewares
+app.use(cors(corsOptions));
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+
+// Logger des requêtes
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
+// Routes
+const apiRoutes = [
+  { path: '/api/auth', route: require('./routes/auth.routes') },
+  { path: '/api/permissions', route: require('./routes/permission.routes') },
+  { path: '/api/rolepermissions', route: require('./routes/rolePermission.routes') },
+  { path: '/api/roles', route: require('./routes/role.routes') },
+  { path: '/api/utilisateurs', route: require('./routes/user.routes') },
+  { path: '/api/departements', route: require('./routes/departement.routes') },
+  { path: '/api/typesfiliere', route: require('./routes/typesFiliere.routes') },
+  { path: '/api/filieres', route: require('./routes/filieres.routes') },
+  { path: '/api/annees', route: require('./routes/anne.routes') },
+  { path: '/api/curcus', route: require('./routes/curcus.routes') },
+  { path: '/api/etudiants', route: require('./routes/etudiant.routes') },
+  {path: '/api/niveaux', route: require('./routes/niveau.routes')}
+];
+
+apiRoutes.forEach(route => {
+  app.use(route.path, route.route);
+});
+
+// Health Check
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
+// Gestion des erreurs
+app.use((err, req, res, next) => {
+  console.error(`[ERROR] ${err.stack}`);
+  res.status(err.status || 500).json({
+    error: {
+      message: err.message,
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    }
+  });
+});
+
+// Démarrer le serveur
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server ready at http://localhost:${PORT}`);
+  console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
+});
