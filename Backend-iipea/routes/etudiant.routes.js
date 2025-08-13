@@ -6,6 +6,8 @@ const { uploadStudentFiles } = require('../middleware/uploas');
 
 // Configuration spécifique pour les uploads étudiants
 const upload = uploadStudentFiles();
+
+// Route d'inscription d'un étudiant
 router.post(
   '/inscription',
   authenticateToken,
@@ -23,6 +25,13 @@ router.post(
     { name: 'documents', maxCount: 5 }
   ]),
   etudiantController.addEtudiant
+);
+
+// Route pour récupérer les étudiants par département
+router.get(
+  '/EtudiantsByDepartement',
+  authenticateToken,
+  etudiantController.getEtudiantsByDepartement
 );
 
 module.exports = router;

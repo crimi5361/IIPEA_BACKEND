@@ -10,9 +10,47 @@ if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-function generateCodeUnique(length = 10) {
+function generateCodeUnique(length = 6) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+}
+
+// Fonction pour générer le matricule IIPEA
+async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
+  try {
+    // Récupérer l'année académique (2 derniers chiffres de la deuxième partie)
+    const anneeRes = await db.query('SELECT annee FROM anneeacademique WHERE id = $1', [anneeAcademiqueId]);
+    let annee = '00';
+    
+    if (anneeRes.rows[0]?.annee) {
+      // Extraire les 2 derniers chiffres de la deuxième partie (ex: "2026-2027" => "27")
+      const yearParts = anneeRes.rows[0].annee.split('-');
+      if (yearParts.length === 2) {
+        annee = yearParts[1].slice(-2);
+      }
+    }
+
+    // Récupérer le sigle de la filière
+    const filiereRes = await db.query('SELECT sigle FROM filiere WHERE id = $1', [filiereId]);
+    const sigle = filiereRes.rows[0]?.sigle || 'XX';
+
+    // Générer une partie aléatoire (6 caractères)
+    const randomPart = generateCodeUnique(6);
+
+    // Récupérer le dernier numéro séquentiel pour cette combinaison
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM etudiant 
+       WHERE matricule_iipea LIKE $1 || $2 || '%'`,
+      [annee, sigle]
+    );
+    const sequenceNumber = (parseInt(countRes.rows[0].count) + 1).toString().padStart(4, '0');
+
+    return `${annee}${sigle}${randomPart}${sequenceNumber}`;
+  } catch (error) {
+    console.error('Erreur génération matricule IIPEA:', error);
+    // Fallback si erreur
+    return `${new Date().getFullYear().toString().slice(-2)}${generateCodeUnique(8)}`;
+  }
 }
 
 exports.addEtudiant = async (req, res) => {
@@ -42,7 +80,7 @@ exports.addEtudiant = async (req, res) => {
 
     // Validation des champs obligatoires
     const requiredFields = {
-      etudiant: ['nom', 'prenoms', 'date_naissance', 'sexe', 'nationalite'],
+      etudiant: ['nom', 'prenoms', 'date_naissance', 'sexe', 'nationalite', 'telephone', 'contact_parent'],
       academique: ['matricule', 'annee_academique_id'],
       inscription: ['niveau_id', 'id_filiere']
     };
@@ -102,19 +140,25 @@ exports.addEtudiant = async (req, res) => {
     const email = `${cleanName(data.etudiant.prenoms.split(' ')[0])}.${cleanName(data.etudiant.nom)}@iipea.com`;
     const hashedPassword = await bcrypt.hash('@elites@', 10);
     const code_unique = generateCodeUnique();
+    
+    // Génération du matricule IIPEA
+    const matricule_iipea = await generateMatriculeIIPEA(
+      data.academique.annee_academique_id,
+      data.inscription.id_filiere
+    );
 
     await db.query('BEGIN');
 
     try {
-      // 1. Insertion de l'étudiant
+      // 1. Insertion de l'étudiant avec les nouveaux champs
       const etudiantQuery = `
         INSERT INTO etudiant (
           matricule, nom, prenoms, date_naissance, lieu_naissance, telephone, email,
           lieu_residence, contact_parent, code_unique, annee_bac, serie_bac, etablissement_origine,
           inscrit_par, photo_url, departement_id, annee_academique_id, groupe_id,
           niveau_id, statut_scolaire, nationalite, standing, numero_table, sexe, password,
-          curcus_id, id_filiere, date_inscription
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW())
+          curcus_id, id_filiere, date_inscription, contact_etudiant, contact_parent_2, matricule_iipea
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW(), $28, $29, $30)
         RETURNING id
       `;
 
@@ -132,7 +176,7 @@ exports.addEtudiant = async (req, res) => {
         data.academique.annee_bac || null,
         data.academique.serie_bac || null,
         data.academique.etablissement_origine || null,
-        req.user.id, // Utilisation de l'ID de l'utilisateur connecté
+        req.user.id,
         photoUrl,
         req.user.departement_id || 1,
         data.academique.annee_academique_id,
@@ -145,28 +189,30 @@ exports.addEtudiant = async (req, res) => {
         data.etudiant.sexe,
         hashedPassword,
         data.inscription.curcus_id || null,
-        data.inscription.id_filiere
+        data.inscription.id_filiere,
+        data.etudiant.telephone, // contact_etudiant
+        data.etudiant.contact_parent_2 || null, // contact_parent_2
+        matricule_iipea // matricule IIPEA généré
       ];
 
       const etudiantResult = await db.query(etudiantQuery, etudiantValues);
       const etudiantId = etudiantResult.rows[0].id;
 
-    // Dans la requête d'insertion des documents :
-     // Dans la partie traitement des documents
-const parseDocumentValue = (val) => val === 'true' ? 'oui' : 'non';
+      // 2. Insertion des documents
+      const parseDocumentValue = (val) => val === 'true' ? 'oui' : 'non';
 
-const docResult = await db.query(
-  `INSERT INTO document (
-    extrait_naissance, justificatif_identite, fiche_orientation, dernier_diplome
-  ) VALUES ($1, $2, $3, $4)
-  RETURNING id`,
-  [
-    parseDocumentValue(data.documents.find(d => d.nom === 'EXTRAIT_DE_NAISSANCE')?.fourni),
-    parseDocumentValue(data.documents.find(d => d.nom === 'JUSTIFICATIF_IDENTITE')?.fourni),
-    parseDocumentValue(data.documents.find(d => d.nom === 'FICHE_ORIENTATION')?.fourni),
-    parseDocumentValue(data.documents.find(d => d.nom === 'COPIES_BAC')?.fourni)
-  ]
-);
+      const docResult = await db.query(
+        `INSERT INTO document (
+          extrait_naissance, justificatif_identite, fiche_orientation, dernier_diplome
+        ) VALUES ($1, $2, $3, $4)
+        RETURNING id`,
+        [
+          parseDocumentValue(data.documents.find(d => d.nom === 'EXTRAIT_DE_NAISSANCE')?.fourni),
+          parseDocumentValue(data.documents.find(d => d.nom === 'JUSTIFICATIF_IDENTITE')?.fourni),
+          parseDocumentValue(data.documents.find(d => d.nom === 'FICHE_ORIENTATION')?.fourni),
+          parseDocumentValue(data.documents.find(d => d.nom === 'COPIES_BAC')?.fourni)
+        ]
+      );
       
       // Mise à jour de l'étudiant avec le document_id
       await db.query(
@@ -202,7 +248,10 @@ const docResult = await db.query(
           code_unique, 
           email, 
           photoUrl,
-          matricule: data.academique.matricule
+          matricule: data.academique.matricule,
+          matricule_iipea,
+          contact_etudiant: data.etudiant.telephone,
+          contact_parent_2: data.etudiant.contact_parent_2 || null
         }
       });
 
@@ -218,10 +267,13 @@ const docResult = await db.query(
 
       // Gestion des erreurs de contrainte unique
       if (err.code === '23505') {
+        const field = err.detail.includes('matricule_iipea') ? 'matricule IIPEA' : 
+                     err.detail.includes('email') ? 'email' : 'matricule';
         return res.status(409).json({
           success: false,
-          error: 'Un étudiant avec ce matricule ou cet email existe déjà',
-          code: 'DUPLICATE_ENTRY'
+          error: `Un étudiant avec ce ${field} existe déjà`,
+          code: 'DUPLICATE_ENTRY',
+          field
         });
       }
 
@@ -243,6 +295,76 @@ const docResult = await db.query(
       error: 'Erreur serveur',
       code: 'SERVER_ERROR',
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+};
+
+
+///=====================================================================================================================
+exports.getEtudiantsByDepartement = async (req, res) => {
+  try {
+    const departementId = req.query.departement_id || req.user?.departement_id;
+    
+    if (!departementId) {
+      return res.status(400).json({
+        success: false,
+        message: "ID du département requis",
+        code: "DEPARTMENT_ID_REQUIRED"
+      });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // REQUÊTE CORRIGÉE AVEC LES BONS NOMS DE TABLES/COLONNES
+    const dataQuery = `
+      SELECT 
+        e.id as etudiant_id,
+        e.code_unique as code_unique,
+        e.nom as etudiant_nom,
+        e.prenoms,
+        f.nom as filiere,
+        f.sigle as filiere_sigle,
+        n.libelle as niveau,
+        a.annee as annee_academique,
+        a.etat as etat_annee,
+        e.telephone,
+        e.email as etudiant_email
+      FROM etudiant e
+      JOIN filiere f ON e.id_filiere = f.id
+      JOIN niveau n ON e.niveau_id = n.id
+      JOIN anneeacademique a ON e.annee_academique_id = a.id  /* Note: 'anneeacademique' en un seul mot */
+      WHERE e.departement_id = $1
+      ORDER BY e.nom ASC, e.prenoms ASC
+      LIMIT $2 OFFSET $3
+    `;
+
+    const countQuery = `
+      SELECT COUNT(*) FROM etudiant e
+      WHERE e.departement_id = $1
+    `;
+
+    const [dataResult, countResult] = await Promise.all([
+      db.query(dataQuery, [departementId, limit, offset]),
+      db.query(countQuery, [departementId])
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: dataResult.rows,
+      total: parseInt(countResult.rows[0].count, 10),
+      page,
+      limit
+    });
+
+  } catch (err) {
+    console.error("Erreur récupération étudiants:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Erreur serveur",
+      code: "SERVER_ERROR",
+      details: err.message
     });
   }
 };
