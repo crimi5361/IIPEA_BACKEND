@@ -443,6 +443,7 @@ exports.getEtudiantById = async (req, res) => {
         e.lieu_residence,
         e.contact_parent,
         e.code_unique,
+        e.date_inscription,
         e.annee_bac,
         e.serie_bac,
         e.statut_scolaire,
@@ -468,7 +469,14 @@ exports.getEtudiantById = async (req, res) => {
         doc.fiche_orientation,
         sc.montant_scolarite,
         sc.scolarite_verse,
-        (sc.montant_scolarite - COALESCE(sc.scolarite_verse, 0)) as scolarite_restante
+        (sc.montant_scolarite - COALESCE(sc.scolarite_verse, 0)) as scolarite_restante,
+        e.statut_scolaire as statut_etudiant,
+        g.id as groupe_id,
+        g.nom as groupe_nom,
+        g.capacite_max as groupe_capacite,
+        c.id as classe_id,
+        c.nom as classe_nom,
+        c.description as classe_description
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
@@ -477,6 +485,8 @@ exports.getEtudiantById = async (req, res) => {
       LEFT JOIN document doc ON e.document_id = doc.id
       LEFT JOIN utilisateur u ON e.inscrit_par::integer = u.id
       LEFT JOIN scolarite sc ON e.scolarite_id = sc.id
+      LEFT JOIN groupe g ON e.groupe_id = g.id
+      LEFT JOIN classe c ON g.classe_id = c.id
       WHERE e.id = $1
     `;
 
@@ -494,12 +504,33 @@ exports.getEtudiantById = async (req, res) => {
     
     // Formater les données
     etudiant.inscrit_par = etudiant.inscrit_par_email;
+    
+    // Structurer les informations de groupe et classe
+    etudiant.groupe = {
+      id: etudiant.groupe_id,
+      nom: etudiant.groupe_nom,
+      capacite_max: etudiant.groupe_capacite,
+      classe: {
+        id: etudiant.classe_id,
+        nom: etudiant.classe_nom,
+        description: etudiant.classe_description
+      }
+    };
+    
+    // Supprimer les champs temporaires
+    delete etudiant.groupe_id;
+    delete etudiant.groupe_nom;
+    delete etudiant.groupe_capacite;
+    delete etudiant.classe_id;
+    delete etudiant.classe_nom;
+    delete etudiant.classe_description;
 
     // Gérer les cas où la scolarité n'est pas définie
     if (etudiant.montant_scolarite === null) {
       etudiant.montant_scolarite = 0;
       etudiant.scolarite_verse = 0;
       etudiant.scolarite_restante = 0;
+      etudiant.statut_etudiant = "NON_DEFINI";
     }
 
     return res.status(200).json({
