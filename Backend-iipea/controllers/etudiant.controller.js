@@ -344,6 +344,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.date_naissance,
         e.lieu_naissance,
         e.telephone,
+        e.email,
         e.lieu_residence,
         e.contact_parent,
         e.code_unique,
@@ -360,16 +361,22 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.contact_etudiant,
         e.contact_parent_2,
         e.matricule_iipea,
+        e.photo_url,
         f.nom as filiere,
         f.sigle as filiere_sigle,
         n.libelle as niveau,
         a.annee as annee_academique,
-        d.nom as departement
+        d.nom as departement,
+        doc.extrait_naissance,
+        doc.justificatif_identite,
+        doc.dernier_diplome,
+        doc.fiche_orientation
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
       JOIN anneeacademique a ON e.annee_academique_id = a.id
       JOIN departement d ON e.departement_id = d.id
+      LEFT JOIN document doc ON e.document_id = doc.id
       ${whereClause}
       ORDER BY e.nom ASC, e.prenoms ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
@@ -409,30 +416,68 @@ exports.getEtudiantsByDepartement = async (req, res) => {
   }
 };
 
+//==============================================================================================================
+
 exports.getEtudiantById = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validation de l'ID
+    if (!id || isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "ID étudiant invalide",
+        code: "INVALID_STUDENT_ID"
+      });
+    }
 
     const query = `
       SELECT 
-        e.*,
+        e.id,
+        e.matricule,
+        e.nom,
+        e.prenoms,
+        e.date_naissance,
+        e.lieu_naissance,
+        e.telephone,
+        e.email,
+        e.lieu_residence,
+        e.contact_parent,
+        e.code_unique,
+        e.annee_bac,
+        e.serie_bac,
+        e.statut_scolaire,
+        e.etablissement_origine,
+        e.inscrit_par,
+        e.date_inscription,
+        e.nationalite,
+        e.standing,
+        e.numero_table,
+        e.sexe,
+        e.photo_url,
+        e.contact_etudiant,
+        e.contact_parent_2,
+        e.matricule_iipea,
         f.nom as filiere,
         f.sigle as filiere_sigle,
         n.libelle as niveau,
         a.annee as annee_academique,
         d.nom as departement,
-        u.nom as inscrit_par_nom,
-        u.prenoms as inscrit_par_prenoms
+        doc.extrait_naissance,
+        doc.justificatif_identite,
+        doc.dernier_diplome,
+        doc.fiche_orientation
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
       JOIN anneeacademique a ON e.annee_academique_id = a.id
       JOIN departement d ON e.departement_id = d.id
-      LEFT JOIN utilisateur u ON e.inscrit_par = u.id
+      LEFT JOIN document doc ON e.document_id = doc.id
+      LEFT JOIN utilisateur u ON e.inscrit_par::integer = u.id  -- Conversion explicite ici
       WHERE e.id = $1
     `;
 
-    const result = await db.query(query, [id]);
+    const result = await db.query(query, [parseInt(id)]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -443,7 +488,8 @@ exports.getEtudiantById = async (req, res) => {
     }
 
     const etudiant = result.rows[0];
-    // Formater le nom de la personne qui a inscrit l'étudiant
+    
+    // Formater les données
     if (etudiant.inscrit_par_nom) {
       etudiant.inscrit_par = `${etudiant.inscrit_par_nom} ${etudiant.inscrit_par_prenoms}`;
     }

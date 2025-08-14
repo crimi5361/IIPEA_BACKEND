@@ -33,10 +33,5 @@ router.post(
 );
 
 // Route pour récupérer les détails d'un étudiant
-router.post(
-  '/etudiant/:id',
-  authenticateToken,
-  etudiantController.getEtudiantById
-);
-
+router.get('/etudiant/:id', authenticateToken, etudiantController.getEtudiantById);
 module.exports = router;
