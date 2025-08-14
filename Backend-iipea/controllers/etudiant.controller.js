@@ -422,7 +422,6 @@ exports.getEtudiantById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Validation de l'ID
     if (!id || isNaN(id)) {
       return res.status(400).json({
         success: false,
@@ -448,7 +447,7 @@ exports.getEtudiantById = async (req, res) => {
         e.serie_bac,
         e.statut_scolaire,
         e.etablissement_origine,
-        e.inscrit_par,
+        u.email as inscrit_par_email,
         e.date_inscription,
         e.nationalite,
         e.standing,
@@ -466,14 +465,18 @@ exports.getEtudiantById = async (req, res) => {
         doc.extrait_naissance,
         doc.justificatif_identite,
         doc.dernier_diplome,
-        doc.fiche_orientation
+        doc.fiche_orientation,
+        sc.montant_scolarite,
+        sc.scolarite_verse,
+        (sc.montant_scolarite - COALESCE(sc.scolarite_verse, 0)) as scolarite_restante
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
       JOIN anneeacademique a ON e.annee_academique_id = a.id
       JOIN departement d ON e.departement_id = d.id
       LEFT JOIN document doc ON e.document_id = doc.id
-      LEFT JOIN utilisateur u ON e.inscrit_par::integer = u.id  -- Conversion explicite ici
+      LEFT JOIN utilisateur u ON e.inscrit_par::integer = u.id
+      LEFT JOIN scolarite sc ON e.scolarite_id = sc.id
       WHERE e.id = $1
     `;
 
@@ -490,8 +493,13 @@ exports.getEtudiantById = async (req, res) => {
     const etudiant = result.rows[0];
     
     // Formater les données
-    if (etudiant.inscrit_par_nom) {
-      etudiant.inscrit_par = `${etudiant.inscrit_par_nom} ${etudiant.inscrit_par_prenoms}`;
+    etudiant.inscrit_par = etudiant.inscrit_par_email;
+
+    // Gérer les cas où la scolarité n'est pas définie
+    if (etudiant.montant_scolarite === null) {
+      etudiant.montant_scolarite = 0;
+      etudiant.scolarite_verse = 0;
+      etudiant.scolarite_restante = 0;
     }
 
     return res.status(200).json({
