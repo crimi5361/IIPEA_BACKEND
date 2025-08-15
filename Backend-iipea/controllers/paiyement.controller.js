@@ -5,25 +5,50 @@ exports.createPaiement = async (req, res) => {
   
   try {
     await client.query('BEGIN');
-    const { etudiant_id, montant, methode, date_paiement } = req.body;
+    const { etudiant_id, montant, methode } = req.body;
     const userId = req.user.id;
+    const date_paiement = new Date(); // Date actuelle
 
-    // 1. Enregistrement du paiement
+    // 1. Vérifier si c'est le premier paiement
+    const checkPremierPaiement = await client.query(
+      'SELECT COUNT(*) FROM paiement WHERE etudiant_id = $1',
+      [etudiant_id]
+    );
+    const isPremierPaiement = parseInt(checkPremierPaiement.rows[0].count) === 0;
+
+    // 2. Créer le reçu
+    const emetteur = req.user.email; // Email de l'utilisateur connecté
+    const recuQuery = `
+      INSERT INTO recu (
+        numero_recu, date_emission, montant, emetteur
+      ) VALUES (
+        'RECU-${Date.now()}', $1, $2, $3
+      ) RETURNING id
+    `;
+    const recuResult = await client.query(recuQuery, [
+      date_paiement,
+      montant,
+      emetteur
+    ]);
+    const recuId = recuResult.rows[0].id;
+
+    // 3. Enregistrement du paiement avec le reçu
     const paiementQuery = `
       INSERT INTO paiement (
-        montant, date_paiement, methode, effectue_par, etudiant_id
-      ) VALUES ($1, $2, $3, $4, $5) 
-      RETURNING id, recu_id
+        montant, date_paiement, methode, effectue_par, etudiant_id, recu_id
+      ) VALUES ($1, $2, $3, $4, $5, $6) 
+      RETURNING id
     `;
     const paiementResult = await client.query(paiementQuery, [
       montant,
       date_paiement,
       methode,
       userId,
-      etudiant_id
+      etudiant_id,
+      recuId
     ]);
 
-    // 2. Récupération des infos étudiant
+    // 4. Récupération des infos étudiant
     const etudiantQuery = `
       SELECT 
         e.id, 
@@ -47,7 +72,7 @@ exports.createPaiement = async (req, res) => {
       throw new Error('Étudiant non trouvé');
     }
 
-    // 3. Calcul des nouvelles valeurs
+    // 5. Calcul des nouvelles valeurs
     const newScolariteVerse = parseFloat(etudiant.scolarite_verse) + parseFloat(montant);
     const newScolariteRestante = parseFloat(etudiant.montant_scolarite) - newScolariteVerse;
 
@@ -56,13 +81,13 @@ exports.createPaiement = async (req, res) => {
       throw new Error('Le montant payé ne peut pas dépasser le montant total de la scolarité');
     }
 
-    // Détermination du statut selon la contrainte (NON_SOLDE avec underscore)
+    // Détermination du statut
     let statutEtudiant = 'NON_SOLDE';
     if (newScolariteRestante === 0) {
       statutEtudiant = 'SOLDE';
     }
 
-    // 4. Mise à jour de la scolarité
+    // 6. Mise à jour de la scolarité
     await client.query(
       `UPDATE scolarite 
        SET scolarite_verse = $1, 
@@ -72,8 +97,8 @@ exports.createPaiement = async (req, res) => {
       [newScolariteVerse, newScolariteRestante, statutEtudiant, etudiant.scolarite_id]
     );
 
-    // 5. Gestion de la classe/groupe (premier paiement)
-    if (parseFloat(etudiant.scolarite_verse) === 0) {
+    // 7. Gestion spécifique pour le premier paiement
+    if (isPremierPaiement) {
       const nomClasse = `${etudiant.filiere} ${etudiant.filiere_sigle} ${etudiant.niveau}`;
       
       // Créer ou trouver la classe
@@ -133,9 +158,10 @@ exports.createPaiement = async (req, res) => {
       success: true,
       data: {
         paiement_id: paiementResult.rows[0].id,
-        recu_id: paiementResult.rows[0].recu_id,
+        recu_id: recuId,
         scolarite_restante: newScolariteRestante,
-        statut_etudiant: statutEtudiant
+        statut_etudiant: statutEtudiant,
+        is_premier_paiement: isPremierPaiement
       }
     });
   } catch (error) {
