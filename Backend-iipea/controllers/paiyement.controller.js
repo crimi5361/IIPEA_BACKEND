@@ -175,3 +175,9 @@ exports.createPaiement = async (req, res) => {
     client.release();
   }
 };
+
+///=====================================================================================================
+
+// Dans votre controller paiement.controller.js
+
+// Nouvelle route dans le controller

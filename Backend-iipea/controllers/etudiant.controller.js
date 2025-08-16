@@ -548,3 +548,108 @@ exports.getEtudiantById = async (req, res) => {
     });
   }
 };
+
+///=================================================================================================
+
+exports.getRecuData = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Requête SQL corrigée avec le bon nom de table
+    const query = `
+      SELECT 
+        e.*,  -- Toutes les colonnes de l'étudiant
+        f.nom as filiere, f.sigle as filiere_sigle,
+        n.libelle as niveau,
+        s.montant_scolarite, s.scolarite_verse, s.scolarite_restante, s.statut_etudiant,
+        g.nom as groupe_nom,
+        c.nom as classe_nom,
+        p.id as paiement_id, p.montant, p.date_paiement, p.methode,
+        r.id as recu_id, r.numero_recu, r.date_emission, r.emetteur,
+        d.nom as departement,
+        aa.annee as annee_academique  
+      FROM etudiant e
+      JOIN filiere f ON e.id_filiere = f.id
+      JOIN niveau n ON e.niveau_id = n.id
+      JOIN scolarite s ON e.scolarite_id = s.id
+      LEFT JOIN departement d ON e.departement_id = d.id
+      LEFT JOIN anneeacademique aa ON e.annee_academique_id = aa.id  
+      LEFT JOIN groupe g ON e.groupe_id = g.id
+      LEFT JOIN classe c ON g.classe_id = c.id
+      LEFT JOIN paiement p ON p.etudiant_id = e.id
+      LEFT JOIN recu r ON p.recu_id = r.id
+      WHERE e.id = $1
+      ORDER BY p.date_paiement DESC
+    `;
+
+    const result = await db.query(query, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Étudiant non trouvé' });
+    }
+
+    // Structurer les données
+    const response = {
+      etudiant: {
+        // Informations personnelles
+        id: result.rows[0].id,
+        nom: result.rows[0].nom,
+        prenoms: result.rows[0].prenoms,
+        matricule: result.rows[0].matricule,
+        matricule_iipea: result.rows[0].matricule_iipea,
+        photo_url: result.rows[0].photo_url,
+        date_naissance: result.rows[0].date_naissance,
+        lieu_naissance: result.rows[0].lieu_naissance,
+        telephone: result.rows[0].telephone,
+        email: result.rows[0].email,
+        lieu_residence: result.rows[0].lieu_residence,
+        contact_parent: result.rows[0].contact_parent,
+        contact_parent_2: result.rows[0].contact_parent_2,
+        nationalite: result.rows[0].nationalite,
+        sexe: result.rows[0].sexe,
+        code_unique: result.rows[0].code_unique,
+        
+        // Informations académiques
+        filiere: result.rows[0].filiere,
+        filiere_sigle: result.rows[0].filiere_sigle,
+        niveau: result.rows[0].niveau,
+        departement: result.rows[0].departement,
+        annee_academique: result.rows[0].annee_academique,
+        groupe: result.rows[0].groupe_nom ? {
+          nom: result.rows[0].groupe_nom,
+          classe: {
+            nom: result.rows[0].classe_nom
+          }
+        } : null,
+        
+        // Scolarité
+        scolarite: {
+          montant_scolarite: result.rows[0].montant_scolarite,
+          scolarite_verse: result.rows[0].scolarite_verse || 0,
+          scolarite_restante: result.rows[0].scolarite_restante || result.rows[0].montant_scolarite,
+          statut_etudiant: result.rows[0].statut_etudiant || 'NON_SOLDE'
+        },
+        
+        // Authentification
+        password: result.rows[0].password || '@elites@'
+      },
+      paiements: result.rows[0].paiement_id ? result.rows.map(row => ({
+        id: row.paiement_id,
+        montant: row.montant,
+        date_paiement: row.date_paiement,
+        methode: row.methode,
+        recu: {
+          id: row.recu_id,
+          numero_recu: row.numero_recu,
+          date_emission: row.date_emission,
+          emetteur: row.emetteur
+        }
+      })) : []
+    };
+
+    res.status(200).json({ success: true, data: response });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+};

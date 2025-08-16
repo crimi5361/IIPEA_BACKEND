@@ -5,4 +5,5 @@ const paiementController = require('../controllers/paiyement.controller');
 
 router.post('/', authenticateToken, paiementController.createPaiement);
 
+
 module.exports = router;
