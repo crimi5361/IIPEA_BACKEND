@@ -10,9 +10,48 @@ if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-function generateCodeUnique(length = 6) {
+// Fonction pour générer un code aléatoire (utilisé en fallback)
+function generateRandomCode(length = 6) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+}
+
+// Fonction pour générer le code unique selon le nouveau format
+async function generateCodeUnique(nom, prenoms) {
+  try {
+    // Normaliser le nom (supprimer accents et espaces)
+    const cleanNom = nom.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '');
+    // Extraire les 3 premières lettres du nom (en majuscules)
+    const nomPart = cleanNom.substring(0, 3).toUpperCase();
+    
+    // Normaliser le prénom et extraire la première lettre du premier prénom
+    const cleanPrenoms = prenoms.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+    const prenomParts = cleanPrenoms.split(' ');
+    const prenomPart = prenomParts[0].substring(0, 1).toUpperCase();
+    
+    // Date actuelle au format JJMMYY
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = String(now.getFullYear()).slice(-2);
+    const datePart = `${day}${month}${year}`;
+    
+    // Compteur séquentiel pour les homonymes
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM etudiant 
+       WHERE nom = $1 AND prenoms LIKE $2 || '%'`,
+      [nom.toUpperCase(), prenomParts[0].toUpperCase()]
+    );
+    const sequenceNumber = (parseInt(countRes.rows[0].count) + 1);
+    const seqPart = String(sequenceNumber).padStart(4, '0');
+    
+    return `${nomPart}${prenomPart}${datePart}${seqPart}`;
+  } catch (error) {
+    console.error('Erreur génération code unique:', error);
+    // Fallback si erreur
+    const fallbackDate = moment().format('DDMMYY');
+    return `${nom.substring(0, 3).toUpperCase()}${prenoms.substring(0, 1).toUpperCase()}${fallbackDate}0001`;
+  }
 }
 
 // Fonction pour générer le matricule IIPEA
@@ -23,7 +62,6 @@ async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
     let annee = '00';
     
     if (anneeRes.rows[0]?.annee) {
-      // Extraire les 2 derniers chiffres de la deuxième partie (ex: "2026-2027" => "27")
       const yearParts = anneeRes.rows[0].annee.split('-');
       if (yearParts.length === 2) {
         annee = yearParts[1].slice(-2);
@@ -34,9 +72,6 @@ async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
     const filiereRes = await db.query('SELECT sigle FROM filiere WHERE id = $1', [filiereId]);
     const sigle = filiereRes.rows[0]?.sigle || 'XX';
 
-    // Générer une partie aléatoire (6 caractères)
-    const randomPart = generateCodeUnique(6);
-
     // Récupérer le dernier numéro séquentiel pour cette combinaison
     const countRes = await db.query(
       `SELECT COUNT(*) FROM etudiant 
@@ -45,24 +80,48 @@ async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
     );
     const sequenceNumber = (parseInt(countRes.rows[0].count) + 1).toString().padStart(4, '0');
 
+    // Générer une partie aléatoire (4 caractères au lieu de 6 pour raccourcir)
+    const randomPart = generateRandomCode(4);
+
     return `${annee}${sigle}${randomPart}${sequenceNumber}`;
   } catch (error) {
     console.error('Erreur génération matricule IIPEA:', error);
     // Fallback si erreur
-    return `${new Date().getFullYear().toString().slice(-2)}${generateCodeUnique(8)}`;
+    return `${new Date().getFullYear().toString().slice(-2)}${generateRandomCode(6)}`;
   }
 }
 
+// Validation des fichiers photo
+function validatePhotoFile(file) {
+  const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+  const allowedExtensions = ['.jpg', '.jpeg', '.png'];
+  const fileExt = path.extname(file.originalname).toLowerCase();
+
+  if (!allowedExtensions.includes(fileExt)) {
+    return { valid: false, error: 'Format de photo invalide. Formats acceptés: JPG, JPEG, PNG' };
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    return { valid: false, error: 'La photo ne doit pas dépasser 2MB' };
+  }
+
+  return { valid: true };
+}
+
 exports.addEtudiant = async (req, res) => {
+  // Vérification de l'authentification
+  if (!req.user?.id) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'Authentification requise',
+      code: 'AUTH_REQUIRED'
+    });
+  }
+
+  // Démarrer une transaction
+  const client = await db.connect();
   try {
-    // Vérification de l'authentification
-    if (!req.user?.id) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Authentification requise',
-        code: 'AUTH_REQUIRED'
-      });
-    }
+    await client.query('BEGIN');
 
     // Transformation et validation des données
     const data = {
@@ -103,20 +162,19 @@ exports.addEtudiant = async (req, res) => {
     // Gestion de la photo
     let photoUrl = null;
     if (req.files?.photo?.[0]) {
-      try {
-        const photoFile = req.files.photo[0];
-        const fileExt = path.extname(photoFile.originalname).toLowerCase();
-        const allowedExtensions = ['.jpg', '.jpeg', '.png'];
-        
-        if (!allowedExtensions.includes(fileExt)) {
-          return res.status(400).json({
-            success: false,
-            error: 'Format de photo invalide. Formats acceptés: JPG, JPEG, PNG',
-            code: 'INVALID_PHOTO_FORMAT'
-          });
-        }
+      const photoFile = req.files.photo[0];
+      const validation = validatePhotoFile(photoFile);
+      
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: validation.error,
+          code: 'INVALID_PHOTO'
+        });
+      }
 
-        // Génération d'un nom de fichier unique
+      try {
+        const fileExt = path.extname(photoFile.originalname).toLowerCase();
         const filename = `photo_${uuidv4()}${fileExt}`;
         const filepath = path.join(UPLOAD_DIR, filename);
         
@@ -139,163 +197,159 @@ exports.addEtudiant = async (req, res) => {
 
     const email = `${cleanName(data.etudiant.prenoms.split(' ')[0])}.${cleanName(data.etudiant.nom)}@iipea.com`;
     const hashedPassword = await bcrypt.hash('@elites@', 10);
-    const code_unique = generateCodeUnique();
     
-    // Génération du matricule IIPEA
+    // Génération des codes
+    const code_unique = await generateCodeUnique(data.etudiant.nom, data.etudiant.prenoms);
     const matricule_iipea = await generateMatriculeIIPEA(
       data.academique.annee_academique_id,
       data.inscription.id_filiere
     );
 
-    await db.query('BEGIN');
+    // 1. Insertion de l'étudiant
+    const etudiantQuery = `
+      INSERT INTO etudiant (
+        matricule, nom, prenoms, date_naissance, lieu_naissance, pays_naissance, telephone, email,
+        lieu_residence, contact_parent, nom_parent_1, nom_parent_2, code_unique, annee_bac, serie_bac, 
+        etablissement_origine, inscrit_par, photo_url, departement_id, annee_academique_id, groupe_id,
+        niveau_id, statut_scolaire, nationalite, standing, numero_table, sexe, password,
+        curcus_id, id_filiere, date_inscription, contact_etudiant, contact_parent_2, matricule_iipea
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), $31, $32, $33)
+      RETURNING id
+    `;
 
-    try {
-      // 1. Insertion de l'étudiant avec les nouveaux champs
-      const etudiantQuery = `
-        INSERT INTO etudiant (
-          matricule, nom, prenoms, date_naissance, lieu_naissance, telephone, email,
-          lieu_residence, contact_parent, code_unique, annee_bac, serie_bac, etablissement_origine,
-          inscrit_par, photo_url, departement_id, annee_academique_id, groupe_id,
-          niveau_id, statut_scolaire, nationalite, standing, numero_table, sexe, password,
-          curcus_id, id_filiere, date_inscription, contact_etudiant, contact_parent_2, matricule_iipea
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW(), $28, $29, $30)
-        RETURNING id
-      `;
+    const etudiantValues = [
+      data.academique.matricule,
+      data.etudiant.nom.toUpperCase(),
+      data.etudiant.prenoms.toUpperCase(),
+      moment(data.etudiant.date_naissance).format('YYYY-MM-DD'),
+      data.etudiant.lieu_naissance,
+      data.etudiant.pays_naissance || null,
+      data.etudiant.telephone,
+      email,
+      data.etudiant.lieu_residence,
+      data.etudiant.contact_parent,
+      data.etudiant.nom_parent_1 || null,
+      data.etudiant.nom_parent_2 || null,
+      code_unique,
+      data.academique.annee_bac || null,
+      data.academique.serie_bac || null,
+      data.academique.etablissement_origine || null,
+      req.user.id,
+      photoUrl,
+      req.user.departement_id || 1,
+      data.academique.annee_academique_id,
+      null, // groupe_id
+      data.inscription.niveau_id,
+      data.academique.statut_scolaire || 'Non affecté',
+      data.etudiant.nationalite,
+      'en attente',
+      data.academique.numero_table || null,
+      data.etudiant.sexe,
+      hashedPassword,
+      data.inscription.curcus_id || null,
+      data.inscription.id_filiere,
+      data.etudiant.telephone, // contact_etudiant
+      data.etudiant.contact_parent_2 || null,
+      matricule_iipea
+    ];
 
-      const etudiantValues = [
-        data.academique.matricule,
-        data.etudiant.nom.toUpperCase(),
-        data.etudiant.prenoms.toUpperCase(),
-        moment(data.etudiant.date_naissance).format('YYYY-MM-DD'),
-        data.etudiant.lieu_naissance,
-        data.etudiant.telephone,
-        email,
-        data.etudiant.lieu_residence,
-        data.etudiant.contact_parent,
-        code_unique,
-        data.academique.annee_bac || null,
-        data.academique.serie_bac || null,
-        data.academique.etablissement_origine || null,
-        req.user.id,
+    const etudiantResult = await client.query(etudiantQuery, etudiantValues);
+    const etudiantId = etudiantResult.rows[0].id;
+
+    // 2. Insertion des documents
+    const parseDocumentValue = (val) => val === 'true' ? 'oui' : 'non';
+
+    const docResult = await client.query(
+      `INSERT INTO document (
+        extrait_naissance, justificatif_identite, fiche_orientation, dernier_diplome
+      ) VALUES ($1, $2, $3, $4)
+      RETURNING id`,
+      [
+        parseDocumentValue(data.documents.find(d => d.nom === 'EXTRAIT_DE_NAISSANCE')?.fourni),
+        parseDocumentValue(data.documents.find(d => d.nom === 'JUSTIFICATIF_IDENTITE')?.fourni),
+        parseDocumentValue(data.documents.find(d => d.nom === 'FICHE_ORIENTATION')?.fourni),
+        parseDocumentValue(data.documents.find(d => d.nom === 'COPIES_BAC')?.fourni)
+      ]
+    );
+    
+    // Mise à jour de l'étudiant avec le document_id
+    await client.query(
+      `UPDATE etudiant SET document_id = $1 WHERE id = $2`,
+      [docResult.rows[0].id, etudiantId]
+    );
+
+    // 3. Insertion de la scolarité
+    const scolariteResult = await client.query(
+      `INSERT INTO scolarite (
+        montant_scolarite, scolarite_verse, statut_etudiant
+      ) VALUES ($1, $2, $3)
+      RETURNING id`,
+      [
+        data.inscription.montant_scolarite || 0,
+        0,
+        'en attente'
+      ]
+    );
+
+    // Mise à jour de l'étudiant avec le scolarite_id
+    await client.query(
+      `UPDATE etudiant SET scolarite_id = $1 WHERE id = $2`,
+      [scolariteResult.rows[0].id, etudiantId]
+    );
+
+    await client.query('COMMIT');
+
+    // Journalisation de l'action
+    console.log(`Nouvel étudiant inscrit: ${data.etudiant.nom} ${data.etudiant.prenoms} (ID: ${etudiantId})`);
+
+    return res.status(201).json({
+      success: true,
+      data: { 
+        id: etudiantId, 
+        code_unique, 
+        email, 
         photoUrl,
-        req.user.departement_id || 1,
-        data.academique.annee_academique_id,
-        null, // groupe_id
-        data.inscription.niveau_id,
-        data.academique.statut_scolaire || 'Non affecté',
-        data.etudiant.nationalite,
-        'en attente',
-        data.academique.numero_table || null,
-        data.etudiant.sexe,
-        hashedPassword,
-        data.inscription.curcus_id || null,
-        data.inscription.id_filiere,
-        data.etudiant.telephone, // contact_etudiant
-        data.etudiant.contact_parent_2 || null, // contact_parent_2
-        matricule_iipea // matricule IIPEA généré
-      ];
-
-      const etudiantResult = await db.query(etudiantQuery, etudiantValues);
-      const etudiantId = etudiantResult.rows[0].id;
-
-      // 2. Insertion des documents
-      const parseDocumentValue = (val) => val === 'true' ? 'oui' : 'non';
-
-      const docResult = await db.query(
-        `INSERT INTO document (
-          extrait_naissance, justificatif_identite, fiche_orientation, dernier_diplome
-        ) VALUES ($1, $2, $3, $4)
-        RETURNING id`,
-        [
-          parseDocumentValue(data.documents.find(d => d.nom === 'EXTRAIT_DE_NAISSANCE')?.fourni),
-          parseDocumentValue(data.documents.find(d => d.nom === 'JUSTIFICATIF_IDENTITE')?.fourni),
-          parseDocumentValue(data.documents.find(d => d.nom === 'FICHE_ORIENTATION')?.fourni),
-          parseDocumentValue(data.documents.find(d => d.nom === 'COPIES_BAC')?.fourni)
-        ]
-      );
-      
-      // Mise à jour de l'étudiant avec le document_id
-      await db.query(
-        `UPDATE etudiant SET document_id = $1 WHERE id = $2`,
-        [docResult.rows[0].id, etudiantId]
-      );
-
-      // 3. Insertion de la scolarité
-      const scolariteResult = await db.query(
-        `INSERT INTO scolarite (
-          montant_scolarite, scolarite_verse, statut_etudiant
-        ) VALUES ($1, $2, $3)
-        RETURNING id`,
-        [
-          data.inscription.montant_scolarite || 0,
-          0,
-          'en attente'
-        ]
-      );
-
-      // Mise à jour de l'étudiant avec le scolarite_id
-      await db.query(
-        `UPDATE etudiant SET scolarite_id = $1 WHERE id = $2`,
-        [scolariteResult.rows[0].id, etudiantId]
-      );
-
-      await db.query('COMMIT');
-
-      return res.status(201).json({
-        success: true,
-        data: { 
-          id: etudiantId, 
-          code_unique, 
-          email, 
-          photoUrl,
-          matricule: data.academique.matricule,
-          matricule_iipea,
-          contact_etudiant: data.etudiant.telephone,
-          contact_parent_2: data.etudiant.contact_parent_2 || null
-        }
-      });
-
-    } catch (err) {
-      await db.query('ROLLBACK');
-      console.error('Erreur DB:', err);
-
-      // Nettoyage de la photo en cas d'erreur
-      if (photoUrl) {
-        const filepath = path.join(UPLOAD_DIR, path.basename(photoUrl));
-        fs.unlink(filepath, () => {});
+        matricule: data.academique.matricule,
+        matricule_iipea,
+        contact_etudiant: data.etudiant.telephone,
+        contact_parent_2: data.etudiant.contact_parent_2 || null
       }
+    });
 
-      // Gestion des erreurs de contrainte unique
-      if (err.code === '23505') {
-        const field = err.detail.includes('matricule_iipea') ? 'matricule IIPEA' : 
-                     err.detail.includes('email') ? 'email' : 'matricule';
-        return res.status(409).json({
-          success: false,
-          error: `Un étudiant avec ce ${field} existe déjà`,
-          code: 'DUPLICATE_ENTRY',
-          field
-        });
-      }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Erreur DB:', err);
 
-      return res.status(500).json({
+    // Nettoyage de la photo en cas d'erreur
+    if (photoUrl) {
+      const filepath = path.join(UPLOAD_DIR, path.basename(photoUrl));
+      fs.unlink(filepath, () => {});
+    }
+
+    // Gestion des erreurs de contrainte unique
+    if (err.code === '23505') {
+      const field = err.detail.includes('matricule_iipea') ? 'matricule IIPEA' : 
+                   err.detail.includes('email') ? 'email' : 
+                   err.detail.includes('code_unique') ? 'code unique' : 'matricule';
+      return res.status(409).json({
         success: false,
-        error: 'Erreur base de données',
-        code: 'DATABASE_ERROR',
-        details: process.env.NODE_ENV === 'development' ? {
-          message: err.message,
-          stack: err.stack
-        } : undefined
+        error: `Un étudiant avec ce ${field} existe déjà`,
+        code: 'DUPLICATE_ENTRY',
+        field
       });
     }
 
-  } catch (err) {
-    console.error('Erreur globale:', err);
     return res.status(500).json({
       success: false,
-      error: 'Erreur serveur',
-      code: 'SERVER_ERROR',
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: 'Erreur base de données',
+      code: 'DATABASE_ERROR',
+      details: process.env.NODE_ENV === 'development' ? {
+        message: err.message,
+        stack: err.stack
+      } : undefined
     });
+  } finally {
+    client.release();
   }
 };
 
@@ -335,6 +389,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
 
     const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
 
+    // Modifiez la requête SELECT pour inclure les nouveaux champs
     const dataQuery = `
       SELECT 
         e.id,
@@ -343,10 +398,13 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.prenoms,
         e.date_naissance,
         e.lieu_naissance,
+        e.pays_naissance, 
         e.telephone,
         e.email,
         e.lieu_residence,
         e.contact_parent,
+        e.nom_parent_1, 
+        e.nom_parent_2, 
         e.code_unique,
         e.annee_bac,
         e.serie_bac,
@@ -381,7 +439,6 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       ORDER BY e.nom ASC, e.prenoms ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
-
     const countQuery = `
       SELECT COUNT(*) 
       FROM etudiant e
@@ -443,6 +500,9 @@ exports.getEtudiantById = async (req, res) => {
         e.lieu_residence,
         e.contact_parent,
         e.code_unique,
+        e.pays_naissance,
+        e.nom_parent_1,
+        e.nom_parent_2,
         e.date_inscription,
         e.annee_bac,
         e.serie_bac,

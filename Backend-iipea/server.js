@@ -45,7 +45,8 @@ const apiRoutes = [
   { path: '/api/curcus', route: require('./routes/curcus.routes') },
   { path: '/api/etudiants', route: require('./routes/etudiant.routes') },
   {path: '/api/niveaux', route: require('./routes/niveau.routes')},
-  {path: "/api/paiements", route: require('./routes/payement.routes')}
+  {path: "/api/paiements", route: require('./routes/payement.routes')},
+  {path: "/api/data", route: require('./routes/data.routes')},
 ];
 
 apiRoutes.forEach(route => {
