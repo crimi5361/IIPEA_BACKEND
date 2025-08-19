@@ -32,6 +32,12 @@ router.post(
   etudiantController.getEtudiantsByDepartement
 );
 
+router.get(
+  '/EtudiantsByDepartementEnattente',
+  authenticateToken,
+  etudiantController.getEtudiantsByDepartementEnAttente
+);
+
 // Route pour récupérer les détails d'un étudiant
 router.get('/etudiant/:id', authenticateToken, etudiantController.getEtudiantById);
 

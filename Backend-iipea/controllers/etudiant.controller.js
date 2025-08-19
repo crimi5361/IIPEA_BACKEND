@@ -371,8 +371,8 @@ exports.getEtudiantsByDepartement = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    let whereClauses = ['e.departement_id = $1'];
-    const params = [departementId];
+    let whereClauses = ['e.departement_id = $1', 'e.standing = $2'];
+    const params = [departementId, 'Inscrit'];
 
     if (req.query.filiere) {
       whereClauses.push('f.nom = $' + (params.length + 1));
@@ -382,14 +382,9 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       whereClauses.push('n.libelle = $' + (params.length + 1));
       params.push(req.query.niveau);
     }
-    if (req.query.statut) {
-      whereClauses.push('e.standing = $' + (params.length + 1));
-      params.push(req.query.statut);
-    }
 
     const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
 
-    // Modifiez la requête SELECT pour inclure les nouveaux champs
     const dataQuery = `
       SELECT 
         e.id,
@@ -463,7 +458,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Erreur récupération étudiants:", err);
+    console.error("Erreur récupération étudiants en attente:", err);
     return res.status(500).json({
       success: false,
       error: "Erreur serveur",
@@ -474,6 +469,123 @@ exports.getEtudiantsByDepartement = async (req, res) => {
 };
 
 //==============================================================================================================
+
+exports.getEtudiantsByDepartementEnAttente = async (req, res) => {
+  try {
+    const departementId = req.query.departement_id || req.user?.departement_id;
+    
+    if (!departementId) {
+      return res.status(400).json({
+        success: false,
+        message: "ID du département requis",
+        code: "DEPARTMENT_ID_REQUIRED"
+      });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    let whereClauses = ['e.departement_id = $1', 'e.standing = $2'];
+    const params = [departementId, 'en attente'];
+
+    if (req.query.filiere) {
+      whereClauses.push('f.nom = $' + (params.length + 1));
+      params.push(req.query.filiere);
+    }
+    if (req.query.niveau) {
+      whereClauses.push('n.libelle = $' + (params.length + 1));
+      params.push(req.query.niveau);
+    }
+
+    const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
+
+    const dataQuery = `
+      SELECT 
+        e.id,
+        e.matricule,
+        e.nom,
+        e.prenoms,
+        e.date_naissance,
+        e.lieu_naissance,
+        e.pays_naissance, 
+        e.telephone,
+        e.email,
+        e.lieu_residence,
+        e.contact_parent,
+        e.nom_parent_1, 
+        e.nom_parent_2, 
+        e.code_unique,
+        e.annee_bac,
+        e.serie_bac,
+        e.statut_scolaire,
+        e.etablissement_origine,
+        e.inscrit_par,
+        e.date_inscription,
+        e.nationalite,
+        e.standing,
+        e.numero_table,
+        e.sexe,
+        e.contact_etudiant,
+        e.contact_parent_2,
+        e.matricule_iipea,
+        e.photo_url,
+        f.nom as filiere,
+        f.sigle as filiere_sigle,
+        n.libelle as niveau,
+        a.annee as annee_academique,
+        d.nom as departement,
+        doc.extrait_naissance,
+        doc.justificatif_identite,
+        doc.dernier_diplome,
+        doc.fiche_orientation
+      FROM etudiant e
+      JOIN filiere f ON e.id_filiere = f.id
+      JOIN niveau n ON e.niveau_id = n.id
+      JOIN anneeacademique a ON e.annee_academique_id = a.id
+      JOIN departement d ON e.departement_id = d.id
+      LEFT JOIN document doc ON e.document_id = doc.id
+      ${whereClause}
+      ORDER BY e.nom ASC, e.prenoms ASC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM etudiant e
+      JOIN filiere f ON e.id_filiere = f.id
+      JOIN niveau n ON e.niveau_id = n.id
+      ${whereClause}
+    `;
+
+    const queryParams = [...params, limit, offset];
+
+    const [dataResult, countResult] = await Promise.all([
+      db.query(dataQuery, queryParams),
+      db.query(countQuery, params)
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: dataResult.rows,
+      total: parseInt(countResult.rows[0].count, 10),
+      page,
+      limit
+    });
+
+  } catch (err) {
+    console.error("Erreur récupération étudiants en attente:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Erreur serveur",
+      code: "SERVER_ERROR",
+      details: err.message
+    });
+  }
+};
+
+
+
+//==============================================================================================================//
 
 exports.getEtudiantById = async (req, res) => {
   try {
