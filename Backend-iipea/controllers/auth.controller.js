@@ -7,7 +7,7 @@ exports.login = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT u.id, u.nom, u.email, u.mot_de_passe, r.nom AS role,
+      `SELECT u.id, u.nom, u.email, u.mot_de_passe, r.nom AS role, u.code,
               d.id AS departement_id, d.nom AS departement_nom
        FROM utilisateur u
        JOIN role r ON u.role_id = r.id
@@ -27,11 +27,16 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Mot de passe incorrect.' });
     }
 
-    const token = jwt.sign(
-      { id: utilisateur.id, role: utilisateur.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    // DANS VOTRE CONTRÔLEUR DE LOGIN (login.js)
+const token = jwt.sign(
+  { 
+    id: utilisateur.id, 
+    role: utilisateur.role,
+    code: utilisateur.code 
+  },
+  process.env.JWT_SECRET,
+  { expiresIn: '24h' }
+);
 
     res.status(200).json({
       token,
@@ -40,6 +45,7 @@ exports.login = async (req, res) => {
         nom: utilisateur.nom,
         email: utilisateur.email,
         role: utilisateur.role,
+        code: utilisateur.code,
         departement: {
           id: utilisateur.departement_id,
           nom: utilisateur.departement_nom

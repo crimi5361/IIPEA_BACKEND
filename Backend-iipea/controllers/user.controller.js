@@ -8,9 +8,10 @@ exports.getAllUsers = async (req, res) => {
             u.id,
             u.nom,
             u.email,
-            d.nom AS departement, -- jointure pour le nom du département
-            r.nom AS role,         -- jointure pour le nom du rôle
-            u.statut
+            d.nom AS departement, 
+            r.nom AS role,        
+            u.statut,
+            u.code
             FROM public.utilisateur u
             JOIN public.departement d ON u.departement_id = d.id
             JOIN public.role r ON u.role_id = r.id
@@ -48,11 +49,14 @@ exports.createUser = async (req, res) => {
     // Hasher le mot de passe par défaut
     const hashedPassword = await bcrypt.hash('@elites@', 10); // sel de 10
 
-    // Insérer l'utilisateur
+    // Générer un code aléatoire à 4 chiffres (entre 1000 et 9999)
+    const code = Math.floor(1000 + Math.random() * 9000);
+
+    // Insérer l'utilisateur avec le code
     const result = await db.query(
-      `INSERT INTO public.utilisateur (nom, email, mot_de_passe, departement_id, role_id, statut)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [nom, email, hashedPassword, departement_id, role_id, 'active']
+      `INSERT INTO public.utilisateur (nom, email, mot_de_passe, departement_id, role_id, statut, code)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [nom, email, hashedPassword, departement_id, role_id, 'active', code]
     );
 
     res.status(201).json({
