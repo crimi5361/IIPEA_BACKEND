@@ -49,7 +49,8 @@ const apiRoutes = [
   {path: "/api/data", route: require('./routes/data.routes')},
   {path: "/api/priseEnCharge", route: require('./routes/priseEnCharge.routes')},
   {path: "/api/kit", route: require('./routes/kit.routes')},
-  {path: "/api/effectifs", route: require('./routes/effectifs.routes')}
+  {path: "/api/effectifs", route: require('./routes/effectifs.routes')},
+  {path: "/api/classes", route: require('./routes/classes.routes')} 
 ];
 
 apiRoutes.forEach(route => {
