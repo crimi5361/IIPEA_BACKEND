@@ -724,37 +724,47 @@ exports.getEtudiantById = async (req, res) => {
 ///=================================================================================================
 
 exports.getRecuData = async (req, res) => {
+  const client = await db.connect();
+  
   try {
     const { id } = req.params;
     
-    // Requête SQL corrigée avec le bon nom de table
+    // Requête SQL optimisée sans SELECT *
     const query = `
       SELECT 
-        e.*,  -- Toutes les colonnes de l'étudiant
+        e.id, e.nom, e.prenoms, e.matricule, e.matricule_iipea, e.photo_url,
+        e.date_naissance, e.lieu_naissance, e.telephone, e.email, e.lieu_residence,
+        e.contact_parent, e.contact_parent_2, e.nationalite, e.sexe, e.code_unique,
+        e.statut_scolaire,
         f.nom as filiere, f.sigle as filiere_sigle,
         n.libelle as niveau,
+        d.nom as departement,
+        aa.annee as annee_academique,
         s.montant_scolarite, s.scolarite_verse, s.scolarite_restante, s.statut_etudiant,
         g.nom as groupe_nom,
         c.nom as classe_nom,
-        p.id as paiement_id, p.montant, p.date_paiement, p.methode,
+        p.id as paiement_id, p.montant as paiement_montant, p.date_paiement, p.methode,
         r.id as recu_id, r.numero_recu, r.date_emission, r.emetteur,
-        d.nom as departement,
-        aa.annee as annee_academique  
+        k.montant as kit_montant, k.deposer as kit_deposer, k.date_enregistrement as kit_date,
+        pec.type_pec, pec.pourcentage_reduction, pec.montant_reduction, pec.statut as pec_statut,
+        pec.date_demande as pec_date_demande, pec.date_validation as pec_date_validation
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
       JOIN scolarite s ON e.scolarite_id = s.id
       LEFT JOIN departement d ON e.departement_id = d.id
-      LEFT JOIN anneeacademique aa ON e.annee_academique_id = aa.id  
+      LEFT JOIN anneeacademique aa ON e.annee_academique_id = aa.id
       LEFT JOIN groupe g ON e.groupe_id = g.id
       LEFT JOIN classe c ON g.classe_id = c.id
       LEFT JOIN paiement p ON p.etudiant_id = e.id
       LEFT JOIN recu r ON p.recu_id = r.id
+      LEFT JOIN kit k ON k.etudiant_id = e.id
+      LEFT JOIN prise_en_charge pec ON pec.etudiant_id = e.id
       WHERE e.id = $1
       ORDER BY p.date_paiement DESC
     `;
 
-    const result = await db.query(query, [id]);
+    const result = await client.query(query, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Étudiant non trouvé' });
@@ -780,6 +790,7 @@ exports.getRecuData = async (req, res) => {
         nationalite: result.rows[0].nationalite,
         sexe: result.rows[0].sexe,
         code_unique: result.rows[0].code_unique,
+        statut_scolaire: result.rows[0].statut_scolaire,
         
         // Informations académiques
         filiere: result.rows[0].filiere,
@@ -802,12 +813,25 @@ exports.getRecuData = async (req, res) => {
           statut_etudiant: result.rows[0].statut_etudiant || 'NON_SOLDE'
         },
         
-        // Authentification
-        password: result.rows[0].password || '@elites@'
+        // Kit et Prise en charge
+        kit: result.rows[0].kit_montant !== null ? {
+          montant: result.rows[0].kit_montant,
+          deposer: result.rows[0].kit_deposer,
+          date_enregistrement: result.rows[0].kit_date
+        } : null,
+        
+        prise_en_charge: result.rows[0].pec_statut !== null ? {
+          type_pec: result.rows[0].type_pec,
+          pourcentage_reduction: result.rows[0].pourcentage_reduction,
+          montant_reduction: result.rows[0].montant_reduction,
+          statut: result.rows[0].pec_statut,
+          date_demande: result.rows[0].pec_date_demande,
+          date_validation: result.rows[0].pec_date_validation
+        } : null
       },
       paiements: result.rows[0].paiement_id ? result.rows.map(row => ({
         id: row.paiement_id,
-        montant: row.montant,
+        montant: row.paiement_montant,
         date_paiement: row.date_paiement,
         methode: row.methode,
         recu: {
@@ -821,7 +845,9 @@ exports.getRecuData = async (req, res) => {
 
     res.status(200).json({ success: true, data: response });
   } catch (error) {
-    console.error(error);
+    console.error('Erreur récupération données reçu:', error);
     res.status(500).json({ success: false, message: 'Erreur serveur' });
+  } finally {
+    client.release();
   }
 };

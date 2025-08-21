@@ -5,10 +5,11 @@ exports.createPaiement = async (req, res) => {
   
   try {
     await client.query('BEGIN');
-    const { etudiant_id, montant, methode } = req.body;
+    const { etudiant_id, montant, methode, veut_kit_ecole, demande_pec, type_pec, pourcentage_reduction, reference_pec } = req.body;
     const userId = req.user.id;
-    const userCode = req.user.code; // Correction: userCode au lieu de userCocde
+    const userCode = req.user.code;
     const date_paiement = new Date();
+    const kitAmount = 10000;
 
     // Validation des données d'entrée
     if (!etudiant_id || !montant || !methode) {
@@ -19,12 +20,59 @@ exports.createPaiement = async (req, res) => {
       throw new Error('Le montant doit être un nombre positif');
     }
 
+    // Vérifier l'existence de kit et PEC active
+    const [kitResult, pecResult] = await Promise.all([
+      client.query('SELECT * FROM kit WHERE etudiant_id = $1', [etudiant_id]),
+      client.query(
+        `SELECT * FROM prise_en_charge 
+         WHERE etudiant_id = $1 AND statut = 'valide'`,
+        [etudiant_id]
+      )
+    ]);
+
+    const hasKit = kitResult.rows.length > 0;
+    const hasActivePEC = pecResult.rows.length > 0;
+    const pecActive = hasActivePEC ? pecResult.rows[0] : null;
+
     // 1. Vérifier si c'est le premier paiement
     const checkPremierPaiement = await client.query(
       'SELECT COUNT(*) FROM paiement WHERE etudiant_id = $1',
       [etudiant_id]
     );
     const isPremierPaiement = parseInt(checkPremierPaiement.rows[0].count) === 0;
+
+    // Gestion du kit pour le premier paiement - TOUJOURS créer une entrée kit
+    if (isPremierPaiement && !hasKit) {
+      let kitMontant = 0;
+      let kitDeposer = false;
+      
+      if (veut_kit_ecole) {
+        // Cas 1: Case cochée - a payé le kit à l'école
+        kitMontant = kitAmount;
+        kitDeposer = true;
+      }
+      // Cas 2: Case non cochée - montant 0 et deposer false
+      
+      await client.query(
+        `INSERT INTO kit (etudiant_id, montant, deposer, date_enregistrement)
+         VALUES ($1, $2, $3, $4)`,
+        [etudiant_id, kitMontant, kitDeposer, date_paiement]
+      );
+    }
+
+    // Gestion de la demande de prise en charge
+    if (demande_pec && !hasActivePEC) {
+      if (!type_pec || !pourcentage_reduction) {
+        throw new Error('Données manquantes pour la prise en charge: type_pec et pourcentage_reduction sont requis');
+      }
+
+      await client.query(
+        `INSERT INTO prise_en_charge 
+         (etudiant_id, type_pec, pourcentage_reduction, reference, statut, date_demande)
+         VALUES ($1, $2, $3, $4, 'en_attente', $5)`,
+        [etudiant_id, type_pec, pourcentage_reduction, reference_pec || null, date_paiement]
+      );
+    }
 
     // 2. Créer le reçu avec un numéro unique
     const numeroRecu = `RECU-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -35,10 +83,10 @@ exports.createPaiement = async (req, res) => {
       RETURNING id
     `;
     const recuResult = await client.query(recuQuery, [
-      numeroRecu, // Utilisation du paramètre plutôt que concaténation
+      numeroRecu,
       date_paiement,
       montant,
-      userCode // Utilisation de userCode corrigé
+      userCode
     ]);
     const recuId = recuResult.rows[0].id;
 
@@ -87,9 +135,15 @@ exports.createPaiement = async (req, res) => {
     const currentVerse = parseFloat(etudiant.scolarite_verse) || 0;
     const totalScolarite = parseFloat(etudiant.montant_scolarite) || 0;
     const montantPaye = parseFloat(montant);
-    
+
+    // Application de la réduction PEC si active
+    let montantReductionPEC = 0;
+    if (hasActivePEC) {
+      montantReductionPEC = (totalScolarite * pecActive.pourcentage_reduction) / 100;
+    }
+
     const newScolariteVerse = currentVerse + montantPaye;
-    const newScolariteRestante = totalScolarite - newScolariteVerse;
+    let newScolariteRestante = totalScolarite - newScolariteVerse - montantReductionPEC;
 
     // Validation des montants
     if (newScolariteRestante < 0) {
@@ -98,7 +152,7 @@ exports.createPaiement = async (req, res) => {
 
     // Détermination du statut
     let statutEtudiant = 'NON_SOLDE';
-    if (Math.abs(newScolariteRestante) < 0.01) { // Tolérance pour les arrondis
+    if (Math.abs(newScolariteRestante) < 0.01) {
       statutEtudiant = 'SOLDE';
     }
 
@@ -150,7 +204,6 @@ exports.createPaiement = async (req, res) => {
         );
 
         if (groupeResult.rows.length === 0) {
-          // Créer un nouveau groupe
           const newGroupe = await client.query(
             `INSERT INTO groupe (nom, capacite_max, classe_id) 
              VALUES ($1, $2, $3) RETURNING id`,
@@ -159,16 +212,13 @@ exports.createPaiement = async (req, res) => {
           groupeId = newGroupe.rows[0].id;
           groupeTrouve = true;
         } else if (parseInt(groupeResult.rows[0].count_etudiants) < 70) {
-          // Groupe existe et a de la place
           groupeId = groupeResult.rows[0].id;
           groupeTrouve = true;
         } else {
-          // Groupe plein, passer au suivant
           groupeNumber++;
         }
       }
 
-      // Mettre à jour l'étudiant
       await client.query(
         `UPDATE etudiant SET groupe_id = $1, standing = 'Inscrit' WHERE id = $2`,
         [groupeId, etudiant_id]
@@ -186,7 +236,10 @@ exports.createPaiement = async (req, res) => {
         scolarite_verse: newScolariteVerse,
         scolarite_restante: newScolariteRestante,
         statut_etudiant: statutEtudiant,
-        is_premier_paiement: isPremierPaiement
+        is_premier_paiement: isPremierPaiement,
+        kit_ajoute: isPremierPaiement && veut_kit_ecole,
+        demande_pec_envoyee: demande_pec && !hasActivePEC,
+        reduction_appliquee: hasActivePEC ? montantReductionPEC : 0
       }
     });
     
@@ -197,6 +250,125 @@ exports.createPaiement = async (req, res) => {
     res.status(error.message.includes('Données manquantes') ? 400 : 500).json({
       success: false,
       message: error.message || 'Erreur lors de l\'enregistrement du paiement'
+    });
+  } finally {
+    client.release();
+  }
+};
+
+// Nouveau contrôleur pour la validation des PEC par l'admin
+exports.validerPEC = async (req, res) => {
+  const client = await db.connect();
+  
+  try {
+    await client.query('BEGIN');
+    const { pec_id, action, motif_refus } = req.body;
+    const adminId = req.user.id;
+
+    if (!pec_id || !action) {
+      throw new Error('Données manquantes: pec_id et action sont requis');
+    }
+
+    // Récupérer la PEC
+    const pecResult = await client.query(
+      `SELECT p.*, s.montant_scolarite, s.scolarite_verse, s.scolarite_restante
+       FROM prise_en_charge p
+       JOIN etudiant e ON p.etudiant_id = e.id
+       JOIN scolarite s ON e.scolarite_id = s.id
+       WHERE p.id = $1`,
+      [pec_id]
+    );
+
+    if (pecResult.rows.length === 0) {
+      throw new Error('Prise en charge non trouvée');
+    }
+
+    const pec = pecResult.rows[0];
+
+    if (pec.statut !== 'en_attente') {
+      throw new Error('Cette prise en charge a déjà été traitée');
+    }
+
+    if (action === 'valider') {
+      // Calculer la réduction
+      const reduction = (pec.montant_scolarite * pec.pourcentage_reduction) / 100;
+      
+      // Mettre à jour la scolarité
+      const nouvelleScolariteRestante = pec.scolarite_restante - reduction;
+      
+      if (nouvelleScolariteRestante < 0) {
+        throw new Error('La réduction dépasse le montant restant de la scolarité');
+      }
+
+      await client.query(
+        `UPDATE scolarite 
+         SET scolarite_restante = $1
+         WHERE etudiant_id = $2`,
+        [nouvelleScolariteRestante, pec.etudiant_id]
+      );
+
+      // Marquer comme validé
+      await client.query(
+        `UPDATE prise_en_charge 
+         SET statut = 'valide', date_validation = $1, valide_par = $2, montant_reduction = $3
+         WHERE id = $4`,
+        [new Date(), adminId, reduction, pec_id]
+      );
+
+    } else if (action === 'refuser') {
+      if (!motif_refus) {
+        throw new Error('Le motif de refus est requis');
+      }
+
+      await client.query(
+        `UPDATE prise_en_charge 
+         SET statut = 'refuse', date_validation = $1, valide_par = $2, motif_refus = $3
+         WHERE id = $4`,
+        [new Date(), adminId, motif_refus, pec_id]
+      );
+    } else {
+      throw new Error('Action non valide: doit être "valider" ou "refuser"');
+    }
+
+    await client.query('COMMIT');
+    res.json({ 
+      success: true, 
+      message: action === 'valider' ? 'PEC validée avec succès' : 'PEC refusée avec succès' 
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erreur lors de la validation PEC:', error);
+    
+    res.status(error.message.includes('Données manquantes') ? 400 : 500).json({
+      success: false,
+      message: error.message || 'Erreur lors de la validation de la prise en charge'
+    });
+  } finally {
+    client.release();
+  }
+};
+
+exports.getPaiementCountByEtudiant = async (req, res) => {
+  const client = await db.connect();
+  
+  try {
+    const { id } = req.params;
+    
+    const countResult = await client.query(
+      'SELECT COUNT(*) FROM paiement WHERE etudiant_id = $1',
+      [id]
+    );
+    
+    res.json({ 
+      success: true, 
+      count: parseInt(countResult.rows[0].count) 
+    });
+  } catch (error) {
+    console.error('Erreur comptage paiements:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors du comptage des paiements' 
     });
   } finally {
     client.release();
