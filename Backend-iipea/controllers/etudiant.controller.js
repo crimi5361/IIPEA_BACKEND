@@ -729,7 +729,7 @@ exports.getRecuData = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Requête SQL optimisée sans SELECT *
+    // Requête SQL optimisée avec correction des jointures
     const query = `
       SELECT 
         e.id, e.nom, e.prenoms, e.matricule, e.matricule_iipea, e.photo_url,
@@ -746,8 +746,10 @@ exports.getRecuData = async (req, res) => {
         p.id as paiement_id, p.montant as paiement_montant, p.date_paiement, p.methode,
         r.id as recu_id, r.numero_recu, r.date_emission, r.emetteur,
         k.montant as kit_montant, k.deposer as kit_deposer, k.date_enregistrement as kit_date,
-        pec.type_pec, pec.pourcentage_reduction, pec.montant_reduction, pec.statut as pec_statut,
-        pec.date_demande as pec_date_demande, pec.date_validation as pec_date_validation
+        pec.id as pec_id, pec.type_pec, pec.pourcentage_reduction, pec.montant_reduction, 
+        pec.statut as pec_statut, pec.reference as pec_reference,
+        pec.date_demande as pec_date_demande, pec.date_validation as pec_date_validation,
+        pec.valide_par as pec_valide_par, pec.motif_refus as pec_motif_refus
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
@@ -760,8 +762,9 @@ exports.getRecuData = async (req, res) => {
       LEFT JOIN recu r ON p.recu_id = r.id
       LEFT JOIN kit k ON k.etudiant_id = e.id
       LEFT JOIN prise_en_charge pec ON pec.etudiant_id = e.id
+      LEFT JOIN utilisateur admin ON pec.valide_par = admin.id
       WHERE e.id = $1
-      ORDER BY p.date_paiement DESC
+      ORDER BY p.date_paiement DESC, pec.date_demande DESC
     `;
 
     const result = await client.query(query, [id]);
@@ -771,76 +774,99 @@ exports.getRecuData = async (req, res) => {
     }
 
     // Structurer les données
+    const etudiantData = result.rows[0];
+    
+    // Récupérer toutes les PEC (il peut y en avoir plusieurs)
+    const toutesLesPEC = result.rows
+      .filter(row => row.pec_id !== null)
+      .map(row => ({
+        id: row.pec_id,
+        type_pec: row.type_pec,
+        pourcentage_reduction: row.pourcentage_reduction,
+        montant_reduction: row.montant_reduction,
+        reference: row.pec_reference,
+        statut: row.pec_statut,
+        date_demande: row.pec_date_demande,
+        date_validation: row.pec_date_validation,
+        valide_par: row.pec_valide_par,
+        motif_refus: row.pec_motif_refus,
+        valide_par_nom: row.admin_nom ? `${row.admin_nom} ${row.admin_prenoms}` : null
+      }));
+
+    // Trouver la PEC active (valide) ou la dernière en attente
+    const pecActive = toutesLesPEC.find(pec => pec.statut === 'valide');
+    const pecEnAttente = toutesLesPEC.find(pec => pec.statut === 'en_attente');
+    const pecRefusee = toutesLesPEC.find(pec => pec.statut === 'refuse');
+
     const response = {
       etudiant: {
         // Informations personnelles
-        id: result.rows[0].id,
-        nom: result.rows[0].nom,
-        prenoms: result.rows[0].prenoms,
-        matricule: result.rows[0].matricule,
-        matricule_iipea: result.rows[0].matricule_iipea,
-        photo_url: result.rows[0].photo_url,
-        date_naissance: result.rows[0].date_naissance,
-        lieu_naissance: result.rows[0].lieu_naissance,
-        telephone: result.rows[0].telephone,
-        email: result.rows[0].email,
-        lieu_residence: result.rows[0].lieu_residence,
-        contact_parent: result.rows[0].contact_parent,
-        contact_parent_2: result.rows[0].contact_parent_2,
-        nationalite: result.rows[0].nationalite,
-        sexe: result.rows[0].sexe,
-        code_unique: result.rows[0].code_unique,
-        statut_scolaire: result.rows[0].statut_scolaire,
+        id: etudiantData.id,
+        nom: etudiantData.nom,
+        prenoms: etudiantData.prenoms,
+        matricule: etudiantData.matricule,
+        matricule_iipea: etudiantData.matricule_iipea,
+        photo_url: etudiantData.photo_url,
+        date_naissance: etudiantData.date_naissance,
+        lieu_naissance: etudiantData.lieu_naissance,
+        telephone: etudiantData.telephone,
+        email: etudiantData.email,
+        lieu_residence: etudiantData.lieu_residence,
+        contact_parent: etudiantData.contact_parent,
+        contact_parent_2: etudiantData.contact_parent_2,
+        nationalite: etudiantData.nationalite,
+        sexe: etudiantData.sexe,
+        code_unique: etudiantData.code_unique,
+        statut_scolaire: etudiantData.statut_scolaire,
         
         // Informations académiques
-        filiere: result.rows[0].filiere,
-        filiere_sigle: result.rows[0].filiere_sigle,
-        niveau: result.rows[0].niveau,
-        departement: result.rows[0].departement,
-        annee_academique: result.rows[0].annee_academique,
-        groupe: result.rows[0].groupe_nom ? {
-          nom: result.rows[0].groupe_nom,
+        filiere: etudiantData.filiere,
+        filiere_sigle: etudiantData.filiere_sigle,
+        niveau: etudiantData.niveau,
+        departement: etudiantData.departement,
+        annee_academique: etudiantData.annee_academique,
+        groupe: etudiantData.groupe_nom ? {
+          nom: etudiantData.groupe_nom,
           classe: {
-            nom: result.rows[0].classe_nom
+            nom: etudiantData.classe_nom
           }
         } : null,
         
         // Scolarité
         scolarite: {
-          montant_scolarite: result.rows[0].montant_scolarite,
-          scolarite_verse: result.rows[0].scolarite_verse || 0,
-          scolarite_restante: result.rows[0].scolarite_restante || result.rows[0].montant_scolarite,
-          statut_etudiant: result.rows[0].statut_etudiant || 'NON_SOLDE'
+          montant_scolarite: etudiantData.montant_scolarite,
+          scolarite_verse: etudiantData.scolarite_verse || 0,
+          scolarite_restante: etudiantData.scolarite_restante || etudiantData.montant_scolarite,
+          statut_etudiant: etudiantData.statut_etudiant || 'NON_SOLDE'
         },
         
-        // Kit et Prise en charge
-        kit: result.rows[0].kit_montant !== null ? {
-          montant: result.rows[0].kit_montant,
-          deposer: result.rows[0].kit_deposer,
-          date_enregistrement: result.rows[0].kit_date
+        // Kit
+        kit: etudiantData.kit_montant !== null ? {
+          montant: etudiantData.kit_montant,
+          deposer: etudiantData.kit_deposer,
+          date_enregistrement: etudiantData.kit_date
         } : null,
         
-        prise_en_charge: result.rows[0].pec_statut !== null ? {
-          type_pec: result.rows[0].type_pec,
-          pourcentage_reduction: result.rows[0].pourcentage_reduction,
-          montant_reduction: result.rows[0].montant_reduction,
-          statut: result.rows[0].pec_statut,
-          date_demande: result.rows[0].pec_date_demande,
-          date_validation: result.rows[0].pec_date_validation
-        } : null
+        // Prise en charge - on prend la PEC active ou la dernière en attente
+        prise_en_charge: pecActive || pecEnAttente || pecRefusee || null,
+        
+        // Toutes les PEC pour historique
+        toutes_prises_en_charge: toutesLesPEC
       },
-      paiements: result.rows[0].paiement_id ? result.rows.map(row => ({
-        id: row.paiement_id,
-        montant: row.paiement_montant,
-        date_paiement: row.date_paiement,
-        methode: row.methode,
-        recu: {
-          id: row.recu_id,
-          numero_recu: row.numero_recu,
-          date_emission: row.date_emission,
-          emetteur: row.emetteur
-        }
-      })) : []
+      paiements: result.rows
+        .filter(row => row.paiement_id !== null)
+        .map(row => ({
+          id: row.paiement_id,
+          montant: row.paiement_montant,
+          date_paiement: row.date_paiement,
+          methode: row.methode,
+          recu: {
+            id: row.recu_id,
+            numero_recu: row.numero_recu,
+            date_emission: row.date_emission,
+            emetteur: row.emetteur
+          }
+        }))
     };
 
     res.status(200).json({ success: true, data: response });

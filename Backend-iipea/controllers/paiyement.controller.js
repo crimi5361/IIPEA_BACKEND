@@ -66,11 +66,24 @@ exports.createPaiement = async (req, res) => {
         throw new Error('Données manquantes pour la prise en charge: type_pec et pourcentage_reduction sont requis');
       }
 
+      // Récupérer le montant de la scolarité pour calculer la réduction
+      const scolariteResult = await client.query(
+        'SELECT montant_scolarite FROM scolarite WHERE id IN (SELECT scolarite_id FROM etudiant WHERE id = $1)',
+        [etudiant_id]
+      );
+      
+      if (scolariteResult.rows.length === 0) {
+        throw new Error('Scolarité non trouvée pour cet étudiant');
+      }
+      
+      const montantScolarite = parseFloat(scolariteResult.rows[0].montant_scolarite);
+      const montantReduction = (montantScolarite * pourcentage_reduction) / 100;
+
       await client.query(
         `INSERT INTO prise_en_charge 
-         (etudiant_id, type_pec, pourcentage_reduction, reference, statut, date_demande)
-         VALUES ($1, $2, $3, $4, 'en_attente', $5)`,
-        [etudiant_id, type_pec, pourcentage_reduction, reference_pec || null, date_paiement]
+         (etudiant_id, type_pec, pourcentage_reduction, montant_reduction, reference, statut, date_demande)
+         VALUES ($1, $2, $3, $4, $5, 'en_attente', $6)`,
+        [etudiant_id, type_pec, pourcentage_reduction, montantReduction, reference_pec || null, date_paiement]
       );
     }
 
@@ -106,7 +119,7 @@ exports.createPaiement = async (req, res) => {
       recuId
     ]);
 
-    // 4. Récupération des infos étudiant
+        // 4. Récupération des infos étudiant (CORRIGÉ)
     const etudiantQuery = `
       SELECT 
         e.id, 
@@ -115,6 +128,7 @@ exports.createPaiement = async (req, res) => {
         n.libelle as niveau,
         s.scolarite_verse, 
         s.montant_scolarite,
+        s.scolarite_restante, 
         s.id as scolarite_id,
         s.statut_etudiant
       FROM etudiant e
@@ -124,16 +138,17 @@ exports.createPaiement = async (req, res) => {
       WHERE e.id = $1
     `;
     const etudiantResult = await client.query(etudiantQuery, [etudiant_id]);
-    
+
     if (etudiantResult.rows.length === 0) {
       throw new Error('Étudiant non trouvé');
     }
-    
+
     const etudiant = etudiantResult.rows[0];
 
     // 5. Calcul des nouvelles valeurs avec parseFloat
     const currentVerse = parseFloat(etudiant.scolarite_verse) || 0;
     const totalScolarite = parseFloat(etudiant.montant_scolarite) || 0;
+    const currentRestante = parseFloat(etudiant.scolarite_restante) || 0; // ← MAINTENANT ÇA FONCTIONNERA
     const montantPaye = parseFloat(montant);
 
     // Application de la réduction PEC si active
@@ -143,7 +158,9 @@ exports.createPaiement = async (req, res) => {
     }
 
     const newScolariteVerse = currentVerse + montantPaye;
-    let newScolariteRestante = totalScolarite - newScolariteVerse - montantReductionPEC;
+
+    // CORRECTION : Utiliser le solde restant actuel qui inclut déjà la réduction PEC
+    let newScolariteRestante = currentRestante - montantPaye;
 
     // Validation des montants
     if (newScolariteRestante < 0) {
@@ -156,7 +173,8 @@ exports.createPaiement = async (req, res) => {
       statutEtudiant = 'SOLDE';
     }
 
-    // 6. Mise à jour de la scolarité
+
+    // ===============6. Mise à jour de la scolarité
     await client.query(
       `UPDATE scolarite 
        SET scolarite_verse = $1, 
@@ -256,7 +274,97 @@ exports.createPaiement = async (req, res) => {
   }
 };
 
-// Nouveau contrôleur pour la validation des PEC par l'admin
+// =========================================================NOUVEAU CONTRÔLEUR POUR LES DEMANDES PEC SANS PAIEMENT=========================================================================================
+exports.demanderPECSeule = async (req, res) => {
+  const client = await db.connect();
+  
+  try {
+    await client.query('BEGIN');
+    const { etudiant_id, type_pec, pourcentage_reduction, reference_pec } = req.body;
+    const date_demande = new Date();
+
+    // Validation des données d'entrée
+    if (!etudiant_id || !type_pec || !pourcentage_reduction) {
+      throw new Error('Données manquantes: etudiant_id, type_pec et pourcentage_reduction sont requis');
+    }
+
+    if (isNaN(parseFloat(pourcentage_reduction)) || parseFloat(pourcentage_reduction) <= 0 || parseFloat(pourcentage_reduction) > 100) {
+      throw new Error('Le pourcentage de réduction doit être un nombre entre 1 et 100');
+    }
+
+    // Vérifier s'il y a déjà une PEC active
+    const pecActiveResult = await client.query(
+      `SELECT * FROM prise_en_charge 
+       WHERE etudiant_id = $1 AND statut = 'valide'`,
+      [etudiant_id]
+    );
+
+    if (pecActiveResult.rows.length > 0) {
+      throw new Error('Une prise en charge active existe déjà pour cet étudiant');
+    }
+
+    // Vérifier s'il y a déjà une PEC en attente
+    const pecEnAttenteResult = await client.query(
+      `SELECT * FROM prise_en_charge 
+       WHERE etudiant_id = $1 AND statut = 'en_attente'`,
+      [etudiant_id]
+    );
+
+    if (pecEnAttenteResult.rows.length > 0) {
+      throw new Error('Une demande de prise en charge est déjà en attente pour cet étudiant');
+    }
+
+    // Récupérer le montant de la scolarité pour calculer la réduction
+    const scolariteResult = await client.query(
+      'SELECT montant_scolarite FROM scolarite WHERE id IN (SELECT scolarite_id FROM etudiant WHERE id = $1)',
+      [etudiant_id]
+    );
+    
+    if (scolariteResult.rows.length === 0) {
+      throw new Error('Scolarité non trouvée pour cet étudiant');
+    }
+    
+    const montantScolarite = parseFloat(scolariteResult.rows[0].montant_scolarite);
+    const montantReduction = (montantScolarite * pourcentage_reduction) / 100;
+
+    // Créer la demande de prise en charge AVEC le montant_reduction calculé
+    const pecResult = await client.query(
+      `INSERT INTO prise_en_charge 
+       (etudiant_id, type_pec, pourcentage_reduction, montant_reduction, reference, statut, date_demande)
+       VALUES ($1, $2, $3, $4, $5, 'en_attente', $6)
+       RETURNING id`,
+      [etudiant_id, type_pec, pourcentage_reduction, montantReduction, reference_pec || null, date_demande]
+    );
+
+    const pecId = pecResult.rows[0].id;
+
+    await client.query('COMMIT');
+    
+    res.status(201).json({
+      success: true,
+      message: 'Demande de prise en charge envoyée avec succès',
+      data: {
+        pec_id: pecId,
+        date_demande: date_demande,
+        montant_reduction: montantReduction,
+        statut: 'en_attente'
+      }
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erreur lors de la demande de prise en charge:', error);
+    
+    res.status(error.message.includes('Données manquantes') ? 400 : 500).json({
+      success: false,
+      message: error.message || 'Erreur lors de la demande de prise en charge'
+    });
+  } finally {
+    client.release();
+  }
+};
+
+// =========================================================NOUVEAU CONTRÔLEUR POUR LA VALIDATION DES PEC PAR L'ADMIN=========================================================================================
 exports.validerPEC = async (req, res) => {
   const client = await db.connect();
   
@@ -269,9 +377,23 @@ exports.validerPEC = async (req, res) => {
       throw new Error('Données manquantes: pec_id et action sont requis');
     }
 
-    // Récupérer la PEC
+    // Récupérer la PEC avec les informations complètes
     const pecResult = await client.query(
-      `SELECT p.*, s.montant_scolarite, s.scolarite_verse, s.scolarite_restante
+      `SELECT 
+         p.id,
+         p.etudiant_id,
+         p.type_pec,
+         p.pourcentage_reduction,
+         p.montant_reduction,
+         p.statut,
+         p.reference,
+         p.date_demande,
+         s.montant_scolarite, 
+         s.scolarite_verse, 
+         s.scolarite_restante,
+         s.id as scolarite_id,
+         s.statut_etudiant, 
+         s.prise_en_charge_id
        FROM prise_en_charge p
        JOIN etudiant e ON p.etudiant_id = e.id
        JOIN scolarite s ON e.scolarite_id = s.id
@@ -289,40 +411,66 @@ exports.validerPEC = async (req, res) => {
       throw new Error('Cette prise en charge a déjà été traitée');
     }
 
+    // Déclarer les variables ici pour qu'elles soient accessibles dans tout le scope
+    let reduction = 0;
+    let nouveauVerse = 0;
+    let nouveauRestant = 0;
+    let nouveauStatutEtudiant = 'NON_SOLDE';
+
     if (action === 'valider') {
-      // Calculer la réduction
-      const reduction = (pec.montant_scolarite * pec.pourcentage_reduction) / 100;
-      
-      // Mettre à jour la scolarité
-      const nouvelleScolariteRestante = pec.scolarite_restante - reduction;
-      
-      if (nouvelleScolariteRestante < 0) {
-        throw new Error('La réduction dépasse le montant restant de la scolarité');
-      }
+  // UTILISER le montant_reduction stocké dans la table
+  reduction = parseFloat(pec.montant_reduction) || 0;
+  const scolariteVerse = parseFloat(pec.scolarite_verse) || 0;
+  const montantScolarite = parseFloat(pec.montant_scolarite) || 0;
+  
+  // CORRECTION: Ajouter la réduction au montant déjà versé
+  nouveauVerse = scolariteVerse + reduction;
+  
+  // CORRECTION: Calculer le nouveau restant à partir du montant total
+  nouveauRestant = montantScolarite - nouveauVerse;
+  
+  if (nouveauRestant < 0) {
+    throw new Error('La réduction dépasse le montant total de la scolarité');
+  }
 
-      await client.query(
-        `UPDATE scolarite 
-         SET scolarite_restante = $1
-         WHERE etudiant_id = $2`,
-        [nouvelleScolariteRestante, pec.etudiant_id]
-      );
+  // Déterminer le nouveau statut
+  if (Math.abs(nouveauRestant) < 0.01) {
+    nouveauStatutEtudiant = 'SOLDE';
+  }
 
-      // Marquer comme validé
-      await client.query(
-        `UPDATE prise_en_charge 
-         SET statut = 'valide', date_validation = $1, valide_par = $2, montant_reduction = $3
-         WHERE id = $4`,
-        [new Date(), adminId, reduction, pec_id]
-      );
+  // Mettre à jour la scolarité - AJOUTER LA RÉDUCTION AU MONTANT VERSÉ
+  await client.query(
+    `UPDATE scolarite 
+     SET scolarite_verse = $1, 
+         scolarite_restante = $2, 
+         statut_etudiant = $3, 
+         prise_en_charge_id = $4
+     WHERE id = $5`,
+    [nouveauVerse, nouveauRestant, nouveauStatutEtudiant, pec_id, pec.scolarite_id]
+  );
+
+  // Marquer la PEC comme validée
+  await client.query(
+    `UPDATE prise_en_charge 
+     SET statut = 'valide', 
+         date_validation = $1, 
+         valide_par = $2
+     WHERE id = $3`,
+    [new Date(), adminId, pec_id]
+  );
 
     } else if (action === 'refuser') {
       if (!motif_refus) {
         throw new Error('Le motif de refus est requis');
       }
 
+      // Pour le refus, on ne change rien à la scolarité, seulement le statut de la PEC
       await client.query(
         `UPDATE prise_en_charge 
-         SET statut = 'refuse', date_validation = $1, valide_par = $2, motif_refus = $3
+         SET statut = 'refuse', 
+             date_validation = $1, 
+             valide_par = $2, 
+             motif_refus = $3
          WHERE id = $4`,
         [new Date(), adminId, motif_refus, pec_id]
       );
@@ -331,10 +479,24 @@ exports.validerPEC = async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.json({ 
-      success: true, 
-      message: action === 'valider' ? 'PEC validée avec succès' : 'PEC refusée avec succès' 
-    });
+    
+    // Préparer la réponse selon l'action
+    const responseData = {
+      success: true,
+      message: action === 'valider' ? 'PEC validée avec succès' : 'PEC refusée avec succès'
+    };
+
+    // Ajouter les données supplémentaires seulement pour la validation
+    if (action === 'valider') {
+      responseData.data = {
+        montant_reduction: reduction,
+        nouveau_montant_verse: nouveauVerse,
+        nouveau_montant_restant: nouveauRestant,
+        nouveau_statut: nouveauStatutEtudiant
+      };
+    }
+
+    res.json(responseData);
 
   } catch (error) {
     await client.query('ROLLBACK');
@@ -348,7 +510,33 @@ exports.validerPEC = async (req, res) => {
     client.release();
   }
 };
-
+//==============================================================================
+exports.getPaiementCountByEtudiant = async (req, res) => {
+  const client = await db.connect();
+  
+  try {
+    const { id } = req.params;
+    
+    const countResult = await client.query(
+      'SELECT COUNT(*) FROM paiement WHERE etudiant_id = $1',
+      [id]
+    );
+    
+    res.json({ 
+      success: true, 
+      count: parseInt(countResult.rows[0].count) 
+    });
+  } catch (error) {
+    console.error('Erreur comptage paiements:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors du comptage des paiements' 
+    });
+  } finally {
+    client.release();
+  }
+};
+//===================================================
 exports.getPaiementCountByEtudiant = async (req, res) => {
   const client = await db.connect();
   

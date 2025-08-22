@@ -242,7 +242,7 @@ exports.getAnneesAcademiques = async (req, res) => {
   }
 };
 
-// Garder l'ancienne route pour compatibilité
+
 exports.getClassesAvecGroupes = async (req, res) => {
   const client = await db.connect();
   

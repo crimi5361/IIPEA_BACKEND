@@ -10,6 +10,7 @@ router.get('/Allpayement', authenticateToken, paiementController.getPaiementsByD
 // Nouvelles routes à ajouter
 router.get('/etudiant/:id/count', authenticateToken, paiementController.getPaiementCountByEtudiant);
 router.post('/valider-pec', authenticateToken, paiementController.validerPEC); // Cette fonction existe déjà dans votre contrôleur !
+router.post('/demande-pec', authenticateToken, paiementController.demanderPECSeule);
 
 
 module.exports = router;
