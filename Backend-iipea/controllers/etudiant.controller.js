@@ -641,14 +641,30 @@ exports.getEtudiantById = async (req, res) => {
         doc.fiche_orientation,
         sc.montant_scolarite,
         sc.scolarite_verse,
-        (sc.montant_scolarite - COALESCE(sc.scolarite_verse, 0)) as scolarite_restante,
+        sc.scolarite_restante,
         e.statut_scolaire as statut_etudiant,
         g.id as groupe_id,
         g.nom as groupe_nom,
         g.capacite_max as groupe_capacite,
         c.id as classe_id,
         c.nom as classe_nom,
-        c.description as classe_description
+        c.description as classe_description,
+        -- Informations sur le kit
+        k.id as kit_id,
+        k.montant as kit_montant,
+        k.deposer as kit_deposer,
+        k.date_enregistrement as kit_date_enregistrement,
+        -- Informations sur la prise en charge
+        pec.id as prise_en_charge_id,
+        pec.reference as prise_en_charge_reference,
+        pec.type_pec as prise_en_charge_type,
+        pec.pourcentage_reduction as prise_en_charge_pourcentage,
+        pec.montant_reduction as prise_en_charge_montant_reduction,
+        pec.statut as prise_en_charge_statut,
+        pec.date_demande as prise_en_charge_date_demande,
+        pec.date_validation as prise_en_charge_date_validation,
+        pec.valide_par as prise_en_charge_valide_par,
+        pec.motif_refus as prise_en_charge_motif_refus
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
@@ -659,6 +675,8 @@ exports.getEtudiantById = async (req, res) => {
       LEFT JOIN scolarite sc ON e.scolarite_id = sc.id
       LEFT JOIN groupe g ON e.groupe_id = g.id
       LEFT JOIN classe c ON g.classe_id = c.id
+      LEFT JOIN kit k ON e.id = k.etudiant_id
+      LEFT JOIN prise_en_charge pec ON e.id = pec.etudiant_id
       WHERE e.id = $1
     `;
 
@@ -672,30 +690,62 @@ exports.getEtudiantById = async (req, res) => {
       });
     }
 
-    const etudiant = result.rows[0];
+    const etudiantData = result.rows[0];
     
-    // Formater les données
-    etudiant.inscrit_par = etudiant.inscrit_par_email;
-    
-    // Structurer les informations de groupe et classe
-    etudiant.groupe = {
-      id: etudiant.groupe_id,
-      nom: etudiant.groupe_nom,
-      capacite_max: etudiant.groupe_capacite,
-      classe: {
-        id: etudiant.classe_id,
-        nom: etudiant.classe_nom,
-        description: etudiant.classe_description
+    // Formater les données de base
+    const etudiant = {
+      ...etudiantData,
+      inscrit_par: etudiantData.inscrit_par_email,
+      
+      // Structurer les informations de groupe et classe
+      groupe: {
+        id: etudiantData.groupe_id,
+        nom: etudiantData.groupe_nom,
+        capacite_max: etudiantData.groupe_capacite,
+        classe: {
+          id: etudiantData.classe_id,
+          nom: etudiantData.classe_nom,
+          description: etudiantData.classe_description
+        }
+      },
+      
+      // Informations sur le kit
+      kit: {
+        id: etudiantData.kit_id,
+        montant: etudiantData.kit_montant,
+        deposer: etudiantData.kit_deposer,
+        date_enregistrement: etudiantData.kit_date_enregistrement
+      },
+      
+      // Informations sur la prise en charge
+      prise_en_charge: {
+        id: etudiantData.prise_en_charge_id,
+        reference: etudiantData.prise_en_charge_reference,
+        type: etudiantData.prise_en_charge_type,
+        pourcentage_reduction: etudiantData.prise_en_charge_pourcentage,
+        montant_reduction: etudiantData.prise_en_charge_montant_reduction,
+        statut: etudiantData.prise_en_charge_statut,
+        date_demande: etudiantData.prise_en_charge_date_demande,
+        date_validation: etudiantData.prise_en_charge_date_validation,
+        valide_par: etudiantData.prise_en_charge_valide_par,
+        motif_refus: etudiantData.prise_en_charge_motif_refus
       }
     };
     
     // Supprimer les champs temporaires
-    delete etudiant.groupe_id;
-    delete etudiant.groupe_nom;
-    delete etudiant.groupe_capacite;
-    delete etudiant.classe_id;
-    delete etudiant.classe_nom;
-    delete etudiant.classe_description;
+    const fieldsToDelete = [
+      'groupe_id', 'groupe_nom', 'groupe_capacite', 'classe_id', 'classe_nom', 'classe_description',
+      'kit_id', 'kit_montant', 'kit_deposer', 'kit_date_enregistrement',
+      'prise_en_charge_id', 'prise_en_charge_reference', 'prise_en_charge_type',
+      'prise_en_charge_pourcentage', 'prise_en_charge_montant_reduction',
+      'prise_en_charge_statut', 'prise_en_charge_date_demande',
+      'prise_en_charge_date_validation', 'prise_en_charge_valide_par',
+      'prise_en_charge_motif_refus', 'inscrit_par_email'
+    ];
+    
+    fieldsToDelete.forEach(field => {
+      delete etudiant[field];
+    });
 
     // Gérer les cas où la scolarité n'est pas définie
     if (etudiant.montant_scolarite === null) {
@@ -703,6 +753,16 @@ exports.getEtudiantById = async (req, res) => {
       etudiant.scolarite_verse = 0;
       etudiant.scolarite_restante = 0;
       etudiant.statut_etudiant = "NON_DEFINI";
+    }
+
+    // Gérer les cas où le kit n'est pas défini
+    if (etudiant.kit.id === null) {
+      etudiant.kit = null;
+    }
+
+    // Gérer les cas où la prise en charge n'est pas définie
+    if (etudiant.prise_en_charge.id === null) {
+      etudiant.prise_en_charge = null;
     }
 
     return res.status(200).json({
@@ -719,7 +779,7 @@ exports.getEtudiantById = async (req, res) => {
       details: err.message
     });
   }
-};
+}
 
 ///=================================================================================================
 

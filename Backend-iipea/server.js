@@ -50,7 +50,10 @@ const apiRoutes = [
   {path: "/api/priseEnCharge", route: require('./routes/priseEnCharge.routes')},
   {path: "/api/kit", route: require('./routes/kit.routes')},
   {path: "/api/effectifs", route: require('./routes/effectifs.routes')},
-  {path: "/api/classes", route: require('./routes/classes.routes')} 
+  {path: "/api/classes", route: require('./routes/classes.routes')} ,
+  {path: "/api/StatDashboard", route: require('./routes/StatDashboard.routes')},
+  // {path: "/api/divisionGroupe", route: require('./routes/divisionGroupe.routes')}
+
 ];
 
 apiRoutes.forEach(route => {

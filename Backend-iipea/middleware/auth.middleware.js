@@ -42,11 +42,12 @@ const authenticateToken = (req, res, next) => {
             });
         }
 
-        // MODIFICATION ICI : Ajoutez le code si présent dans le token
-         req.user = {
+        // CORRECTION ICI : Utilisez decoded au lieu de user
+        req.user = {
           id: decoded.id,
           role: decoded.role,
-          code: decoded.code // ← MAINTENANT le code sera disponible
+          code: decoded.code,
+          departement_id: decoded.departement_id // ← Utilisez decoded.departement_id
         };
         
         console.log('Utilisateur authentifié:', req.user);

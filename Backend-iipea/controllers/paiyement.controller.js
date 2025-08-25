@@ -9,7 +9,7 @@ exports.createPaiement = async (req, res) => {
     const userId = req.user.id;
     const userCode = req.user.code;
     const date_paiement = new Date();
-    const kitAmount = 10000;
+    const kitAmount = 5000;
 
     // Validation des données d'entrée
     if (!etudiant_id || !montant || !methode) {
@@ -119,22 +119,27 @@ exports.createPaiement = async (req, res) => {
       recuId
     ]);
 
-        // 4. Récupération des infos étudiant (CORRIGÉ)
+    // 4. Récupération des infos étudiant AVEC TYPE DE FILIERE
     const etudiantQuery = `
       SELECT 
         e.id, 
         f.nom as filiere, 
         f.sigle as filiere_sigle, 
+        f.type_filiere_id,
+        tf.libelle as type_filiere,
         n.libelle as niveau,
         s.scolarite_verse, 
         s.montant_scolarite,
         s.scolarite_restante, 
         s.id as scolarite_id,
-        s.statut_etudiant
+        s.statut_etudiant,
+        p.montant_reduction
       FROM etudiant e
       JOIN scolarite s ON e.scolarite_id = s.id
       JOIN filiere f ON e.id_filiere = f.id
+      JOIN typefiliere tf ON f.type_filiere_id = tf.id
       JOIN niveau n ON e.niveau_id = n.id
+      LEFT JOIN prise_en_charge p ON p.etudiant_id = e.id AND p.statut = 'valide'
       WHERE e.id = $1
     `;
     const etudiantResult = await client.query(etudiantQuery, [etudiant_id]);
@@ -148,19 +153,38 @@ exports.createPaiement = async (req, res) => {
     // 5. Calcul des nouvelles valeurs avec parseFloat
     const currentVerse = parseFloat(etudiant.scolarite_verse) || 0;
     const totalScolarite = parseFloat(etudiant.montant_scolarite) || 0;
-    const currentRestante = parseFloat(etudiant.scolarite_restante) || 0; // ← MAINTENANT ÇA FONCTIONNERA
     const montantPaye = parseFloat(montant);
 
     // Application de la réduction PEC si active
     let montantReductionPEC = 0;
+    let currentRestante;
+    
     if (hasActivePEC) {
-      montantReductionPEC = (totalScolarite * pecActive.pourcentage_reduction) / 100;
+      // LOGIQUE CORRECTE: Utiliser le montant_reduction de la PEC
+      montantReductionPEC = parseFloat(etudiant.montant_reduction) || 0;
+      
+      // Calcul du restant selon votre logique: total - (verse + réduction)
+      const totalVerseVirtuel = currentVerse + montantReductionPEC;
+      currentRestante = totalScolarite - totalVerseVirtuel;
+    } else {
+      // Sans PEC, calcul normal
+      if (etudiant.scolarite_restante === null || etudiant.scolarite_restante === undefined) {
+        currentRestante = totalScolarite - currentVerse;
+      } else {
+        currentRestante = parseFloat(etudiant.scolarite_restante) || 0;
+      }
     }
 
     const newScolariteVerse = currentVerse + montantPaye;
-
-    // CORRECTION : Utiliser le solde restant actuel qui inclut déjà la réduction PEC
-    let newScolariteRestante = currentRestante - montantPaye;
+    
+    // Calcul du nouveau restant selon la même logique
+    let newScolariteRestante;
+    if (hasActivePEC) {
+      const totalVerseVirtuel = newScolariteVerse + montantReductionPEC;
+      newScolariteRestante = totalScolarite - totalVerseVirtuel;
+    } else {
+      newScolariteRestante = currentRestante - montantPaye;
+    }
 
     // Validation des montants
     if (newScolariteRestante < 0) {
@@ -173,8 +197,7 @@ exports.createPaiement = async (req, res) => {
       statutEtudiant = 'SOLDE';
     }
 
-
-    // ===============6. Mise à jour de la scolarité
+    // 6. Mise à jour de la scolarité
     await client.query(
       `UPDATE scolarite 
        SET scolarite_verse = $1, 
@@ -184,7 +207,7 @@ exports.createPaiement = async (req, res) => {
       [newScolariteVerse, newScolariteRestante, statutEtudiant, etudiant.scolarite_id]
     );
 
-    // 7. Gestion spécifique pour le premier paiement
+    // 7. Gestion spécifique pour le premier paiement - AVEC CAPACITÉ DYNAMIQUE
     if (isPremierPaiement) {
       const nomClasse = `${etudiant.filiere} ${etudiant.filiere_sigle} ${etudiant.niveau}`;
       
@@ -205,38 +228,57 @@ exports.createPaiement = async (req, res) => {
         classeId = newClasseResult.rows[0].id;
       }
 
-      // Trouver ou créer un groupe disponible
-      let groupeNumber = 1;
-      let groupeId;
-      let groupeTrouve = false;
-      
-      while (!groupeTrouve) {
-        const nomGroupe = `${nomClasse} Groupe ${groupeNumber}`;
-        const groupeResult = await client.query(
-          `SELECT g.id, COUNT(e.id) as count_etudiants
-           FROM groupe g 
-           LEFT JOIN etudiant e ON e.groupe_id = g.id
-           WHERE g.nom = $1 
-           GROUP BY g.id`,
-          [nomGroupe]
-        );
-
-        if (groupeResult.rows.length === 0) {
-          const newGroupe = await client.query(
-            `INSERT INTO groupe (nom, capacite_max, classe_id) 
-             VALUES ($1, $2, $3) RETURNING id`,
-            [nomGroupe, 70, classeId]
-          );
-          groupeId = newGroupe.rows[0].id;
-          groupeTrouve = true;
-        } else if (parseInt(groupeResult.rows[0].count_etudiants) < 70) {
-          groupeId = groupeResult.rows[0].id;
-          groupeTrouve = true;
-        } else {
-          groupeNumber++;
-        }
+      // Déterminer la capacité maximale selon le type de filière
+      let capaciteMax;
+      switch(etudiant.type_filiere) {
+        case 'Universitaire':
+        case 'Classique':
+          capaciteMax = 100;
+          break;
+        case 'Professionnelle':
+        case 'Technique':
+          capaciteMax = 50;
+          break;
+        default:
+          capaciteMax = 70; // Valeur par défaut
       }
 
+      // Trouver le dernier groupe disponible pour cette classe
+      let groupeResult = await client.query(
+        `SELECT g.id, g.nom, COUNT(e.id) as count_etudiants
+         FROM groupe g 
+         LEFT JOIN etudiant e ON e.groupe_id = g.id
+         WHERE g.classe_id = $1 
+         GROUP BY g.id, g.nom, g.capacite_max
+         HAVING COUNT(e.id) < g.capacite_max
+         ORDER BY g.nom
+         LIMIT 1`,
+        [classeId]
+      );
+
+      let groupeId;
+      if (groupeResult.rows.length > 0) {
+        // Groupe avec de la place disponible trouvé
+        groupeId = groupeResult.rows[0].id;
+      } else {
+        // Aucun groupe avec de la place, créer un nouveau groupe
+        const countGroupesResult = await client.query(
+          `SELECT COUNT(*) as count_groupes FROM groupe WHERE classe_id = $1`,
+          [classeId]
+        );
+        
+        const numeroNouveauGroupe = parseInt(countGroupesResult.rows[0].count_groupes) + 1;
+        const nomGroupe = `${nomClasse} Groupe ${numeroNouveauGroupe}`;
+        
+        const newGroupe = await client.query(
+          `INSERT INTO groupe (nom, capacite_max, classe_id) 
+           VALUES ($1, $2, $3) RETURNING id`,
+          [nomGroupe, capaciteMax, classeId]
+        );
+        groupeId = newGroupe.rows[0].id;
+      }
+
+      // Assigner l'étudiant au groupe trouvé ou créé
       await client.query(
         `UPDATE etudiant SET groupe_id = $1, standing = 'Inscrit' WHERE id = $2`,
         [groupeId, etudiant_id]
@@ -257,7 +299,10 @@ exports.createPaiement = async (req, res) => {
         is_premier_paiement: isPremierPaiement,
         kit_ajoute: isPremierPaiement && veut_kit_ecole,
         demande_pec_envoyee: demande_pec && !hasActivePEC,
-        reduction_appliquee: hasActivePEC ? montantReductionPEC : 0
+        reduction_appliquee: hasActivePEC ? montantReductionPEC : 0,
+        total_scolarite: totalScolarite,
+        total_verse_virtuel: hasActivePEC ? newScolariteVerse + montantReductionPEC : newScolariteVerse,
+        type_filiere: etudiant.type_filiere
       }
     });
     
@@ -273,7 +318,6 @@ exports.createPaiement = async (req, res) => {
     client.release();
   }
 };
-
 // =========================================================NOUVEAU CONTRÔLEUR POUR LES DEMANDES PEC SANS PAIEMENT=========================================================================================
 exports.demanderPECSeule = async (req, res) => {
   const client = await db.connect();
@@ -411,53 +455,56 @@ exports.validerPEC = async (req, res) => {
       throw new Error('Cette prise en charge a déjà été traitée');
     }
 
-    // Déclarer les variables ici pour qu'elles soient accessibles dans tout le scope
     let reduction = 0;
     let nouveauVerse = 0;
     let nouveauRestant = 0;
     let nouveauStatutEtudiant = 'NON_SOLDE';
 
     if (action === 'valider') {
-  // UTILISER le montant_reduction stocké dans la table
-  reduction = parseFloat(pec.montant_reduction) || 0;
-  const scolariteVerse = parseFloat(pec.scolarite_verse) || 0;
-  const montantScolarite = parseFloat(pec.montant_scolarite) || 0;
-  
-  // CORRECTION: Ajouter la réduction au montant déjà versé
-  nouveauVerse = scolariteVerse + reduction;
-  
-  // CORRECTION: Calculer le nouveau restant à partir du montant total
-  nouveauRestant = montantScolarite - nouveauVerse;
-  
-  if (nouveauRestant < 0) {
-    throw new Error('La réduction dépasse le montant total de la scolarité');
-  }
+      // UTILISER le montant_reduction stocké dans la table
+      reduction = parseFloat(pec.montant_reduction) || 0;
+      const scolariteVerse = parseFloat(pec.scolarite_verse) || 0;
+      const montantScolarite = parseFloat(pec.montant_scolarite) || 0;
+      
+      // LOGIQUE CORRECTE: La réduction s'ajoute VIRTUELLEMENT au montant versé
+      // pour le calcul du restant, mais on ne modifie PAS scolarite_verse
+      const totalVerseVirtuel = scolariteVerse + reduction;
+      
+      // Calcul du nouveau restant selon votre logique
+      nouveauRestant = montantScolarite - totalVerseVirtuel;
+      
+      if (nouveauRestant < 0) {
+        throw new Error('La réduction dépasse le montant total de la scolarité');
+      }
 
-  // Déterminer le nouveau statut
-  if (Math.abs(nouveauRestant) < 0.01) {
-    nouveauStatutEtudiant = 'SOLDE';
-  }
+      // Déterminer le nouveau statut
+      if (Math.abs(nouveauRestant) < 0.01) {
+        nouveauStatutEtudiant = 'SOLDE';
+      }
 
-  // Mettre à jour la scolarité - AJOUTER LA RÉDUCTION AU MONTANT VERSÉ
-  await client.query(
-    `UPDATE scolarite 
-     SET scolarite_verse = $1, 
-         scolarite_restante = $2, 
-         statut_etudiant = $3, 
-         prise_en_charge_id = $4
-     WHERE id = $5`,
-    [nouveauVerse, nouveauRestant, nouveauStatutEtudiant, pec_id, pec.scolarite_id]
-  );
+      // Mettre à jour la scolarité - NE PAS modifier scolarite_verse
+      // Seulement mettre à jour scolarite_restante et le statut
+      await client.query(
+        `UPDATE scolarite 
+         SET scolarite_restante = $1, 
+             statut_etudiant = $2, 
+             prise_en_charge_id = $3
+         WHERE id = $4`,
+        [nouveauRestant, nouveauStatutEtudiant, pec_id, pec.scolarite_id]
+      );
 
-  // Marquer la PEC comme validée
-  await client.query(
-    `UPDATE prise_en_charge 
-     SET statut = 'valide', 
-         date_validation = $1, 
-         valide_par = $2
-     WHERE id = $3`,
-    [new Date(), adminId, pec_id]
-  );
+      // Marquer la PEC comme validée
+      await client.query(
+        `UPDATE prise_en_charge 
+         SET statut = 'valide', 
+             date_validation = $1, 
+             valide_par = $2
+         WHERE id = $3`,
+        [new Date(), adminId, pec_id]
+      );
+
+      // Pour la réponse, on garde les valeurs calculées
+      nouveauVerse = scolariteVerse; // Le montant versé réel ne change pas
 
     } else if (action === 'refuser') {
       if (!motif_refus) {
@@ -490,7 +537,8 @@ exports.validerPEC = async (req, res) => {
     if (action === 'valider') {
       responseData.data = {
         montant_reduction: reduction,
-        nouveau_montant_verse: nouveauVerse,
+        montant_verse_reel: nouveauVerse, // Montant réellement versé (inchangé)
+        montant_verse_virtuel: nouveauVerse + reduction, // Montant versé + réduction
         nouveau_montant_restant: nouveauRestant,
         nouveau_statut: nouveauStatutEtudiant
       };
@@ -510,6 +558,7 @@ exports.validerPEC = async (req, res) => {
     client.release();
   }
 };
+
 //==============================================================================
 exports.getPaiementCountByEtudiant = async (req, res) => {
   const client = await db.connect();

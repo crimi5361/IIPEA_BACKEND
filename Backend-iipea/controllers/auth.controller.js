@@ -28,11 +28,13 @@ exports.login = async (req, res) => {
     }
 
     // DANS VOTRE CONTRÔLEUR DE LOGIN (login.js)
+
 const token = jwt.sign(
   { 
     id: utilisateur.id, 
     role: utilisateur.role,
-    code: utilisateur.code 
+    code: utilisateur.code,
+    departement_id: utilisateur.departement_id // ← Bien présent ici
   },
   process.env.JWT_SECRET,
   { expiresIn: '24h' }
