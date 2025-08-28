@@ -240,7 +240,7 @@ exports.createPaiement = async (req, res) => {
           capaciteMax = 50;
           break;
         default:
-          capaciteMax = 70; // Valeur par défaut
+          capaciteMax = 50; // Valeur par défaut
       }
 
       // Trouver le dernier groupe disponible pour cette classe
