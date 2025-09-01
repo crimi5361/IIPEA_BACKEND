@@ -6,9 +6,11 @@ exports.getListeClasses = async (req, res) => {
   
   try {
     const { annee_id } = req.query;
-    
+    // Récupérer depuis le token ou les infos de l'utilisateur connecté
+    const departement_id = req.user?.departement_id; // Si vous avez middleware d'authentification
+
     const query = `
-      SELECT 
+      SELECT DISTINCT
         c.id,
         c.nom,
         c.description,
@@ -17,19 +19,22 @@ exports.getListeClasses = async (req, res) => {
         COUNT(DISTINCT g.id) as nombre_groupes,
         COUNT(DISTINCT e.id) as effectif_total,
         f.nom as filiere,
-        n.libelle as niveau
+        n.libelle as niveau,
+        d.nom as departement
       FROM classe c
       LEFT JOIN groupe g ON g.classe_id = c.id
       LEFT JOIN etudiant e ON e.groupe_id = g.id
       LEFT JOIN anneeacademique aa ON e.annee_academique_id = aa.id
       LEFT JOIN filiere f ON c.nom LIKE '%' || f.nom || '%' OR c.nom LIKE '%' || f.sigle || '%'
       LEFT JOIN niveau n ON c.nom LIKE '%' || n.libelle || '%'
+      LEFT JOIN departement d ON e.departement_id = d.id
       WHERE ($1::int IS NULL OR aa.id = $1)
-      GROUP BY c.id, c.nom, c.description, aa.annee, aa.etat, f.nom, n.libelle
+      AND e.departement_id = $2  -- Filtrer par département
+      GROUP BY c.id, c.nom, c.description, aa.annee, aa.etat, f.nom, n.libelle, d.nom
       ORDER BY c.nom
     `;
 
-    const result = await client.query(query, [annee_id || null]);
+    const result = await client.query(query, [annee_id || null, departement_id]);
 
     res.status(200).json({
       success: true,
@@ -46,6 +51,7 @@ exports.getListeClasses = async (req, res) => {
     client.release();
   }
 };
+
 
 // Route pour DetailClasse (détails d'une classe spécifique)
 exports.getDetailClasse = async (req, res) => {

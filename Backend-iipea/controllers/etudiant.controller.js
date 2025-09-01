@@ -423,22 +423,38 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         doc.extrait_naissance,
         doc.justificatif_identite,
         doc.dernier_diplome,
-        doc.fiche_orientation
+        doc.fiche_orientation,
+        -- Informations de scolarité
+        s.montant_scolarite,
+        s.scolarite_verse,
+        s.scolarite_restante,
+        s.statut_etudiant,
+        s.prise_en_charge_id,
+        COALESCE(s.montant_scolarite, 0) as montant_total_scolarite,
+        COALESCE(s.scolarite_verse, 0) as montant_paye,
+        COALESCE(s.scolarite_restante, 0) as montant_restant,
+        CASE 
+          WHEN s.montant_scolarite IS NULL OR s.montant_scolarite = 0 THEN 0
+          ELSE ROUND((COALESCE(s.scolarite_verse, 0) / s.montant_scolarite) * 100, 2)
+        END as pourcentage_paye
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
       JOIN anneeacademique a ON e.annee_academique_id = a.id
       JOIN departement d ON e.departement_id = d.id
       LEFT JOIN document doc ON e.document_id = doc.id
+      LEFT JOIN scolarite s ON e.scolarite_id = s.id
       ${whereClause}
       ORDER BY e.nom ASC, e.prenoms ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
+    
     const countQuery = `
       SELECT COUNT(*) 
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
+      LEFT JOIN scolarite s ON e.scolarite_id = s.id
       ${whereClause}
     `;
 
@@ -467,7 +483,6 @@ exports.getEtudiantsByDepartement = async (req, res) => {
     });
   }
 };
-
 //==============================================================================================================
 
 exports.getEtudiantsByDepartementEnAttente = async (req, res) => {

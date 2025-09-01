@@ -5,35 +5,46 @@ exports.getEffectifsParFiliereNiveau = async (req, res) => {
   
   try {
     const { annee_id } = req.query;
-    
+    // Récupérer l'ID du département de l'utilisateur connecté
+    const departement_id = req.user?.departement_id || req.headers.departement_id || localStorage.getItem("departement_id");
+
+    if (!departement_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Département non spécifié'
+      });
+    }
+
     const query = `
       SELECT 
         f.nom as filiere,
         f.sigle as filiere_sigle,
         n.libelle as niveau,
-        c.type_parcours as cycle,  -- Récupère le nom du cycle depuis curcus
+        c.type_parcours as cycle,
         COUNT(e.id) as nombre_inscrits
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
-      JOIN curcus c ON e.curcus_id = c.id  -- Jointure avec la table curcus
+      JOIN curcus c ON e.curcus_id = c.id
       JOIN anneeacademique aa ON e.annee_academique_id = aa.id
       WHERE aa.id = $1
+      AND e.departement_id = $2  -- FILTRE PAR DÉPARTEMENT
       GROUP BY f.nom, f.sigle, n.libelle, c.type_parcours
       ORDER BY f.nom, n.libelle
     `;
 
-    const result = await client.query(query, [annee_id || 1]);
+    const result = await client.query(query, [annee_id || 1, departement_id]);
 
-    // Also get total students
+    // Total étudiants pour ce département
     const totalQuery = `
       SELECT COUNT(*) as total_inscrits
       FROM etudiant e
       JOIN anneeacademique aa ON e.annee_academique_id = aa.id
       WHERE aa.id = $1
+      AND e.departement_id = $2  -- FILTRE PAR DÉPARTEMENT
     `;
     
-    const totalResult = await client.query(totalQuery, [annee_id || 1]);
+    const totalResult = await client.query(totalQuery, [annee_id || 1, departement_id]);
 
     res.status(200).json({
       success: true,
