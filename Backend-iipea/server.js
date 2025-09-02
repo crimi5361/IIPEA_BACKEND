@@ -53,6 +53,7 @@ const apiRoutes = [
   {path: "/api/classes", route: require('./routes/classes.routes')} ,
   {path: "/api/StatDashboard", route: require('./routes/StatDashboard.routes')},
   {path: "/api/CertificatScolarite", route: require('./routes/CertificatScolarite.routes')},
+  {path:"/api/StatsInscriptions", route: require('./routes/StatsInscriptions.routes')},
   // {path: "/api/divisionGroupe", route: require('./routes/divisionGroupe.routes')}
 
 

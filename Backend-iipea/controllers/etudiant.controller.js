@@ -17,7 +17,8 @@ function generateRandomCode(length = 6) {
 }
 
 // Fonction pour générer le code unique selon le nouveau format
-async function generateCodeUnique(nom, prenoms) {
+// Fonction pour générer le code unique selon le nouveau format AVEC DATE DE NAISSANCE
+async function generateCodeUnique(nom, prenoms, dateNaissance) {
   try {
     // Normaliser le nom (supprimer accents et espaces)
     const cleanNom = nom.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '');
@@ -29,18 +30,20 @@ async function generateCodeUnique(nom, prenoms) {
     const prenomParts = cleanPrenoms.split(' ');
     const prenomPart = prenomParts[0].substring(0, 1).toUpperCase();
     
-    // Date actuelle au format JJMMYY
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = String(now.getFullYear()).slice(-2);
+    // Utiliser la DATE DE NAISSANCE au format JJMMAA au lieu de la date actuelle
+    const birthDate = moment(dateNaissance);
+    const day = String(birthDate.date()).padStart(2, '0');
+    const month = String(birthDate.month() + 1).padStart(2, '0');
+    const year = String(birthDate.year()).slice(-2);
     const datePart = `${day}${month}${year}`;
     
-    // Compteur séquentiel pour les homonymes
+    // Compteur séquentiel pour les homonymes (même nom + même initiale + même date de naissance)
     const countRes = await db.query(
       `SELECT COUNT(*) FROM etudiant 
-       WHERE nom = $1 AND prenoms LIKE $2 || '%'`,
-      [nom.toUpperCase(), prenomParts[0].toUpperCase()]
+       WHERE nom = $1 
+         AND prenoms LIKE $2 || '%'
+         AND date_naissance = $3`,
+      [nom.toUpperCase(), prenomParts[0].toUpperCase(), dateNaissance]
     );
     const sequenceNumber = (parseInt(countRes.rows[0].count) + 1);
     const seqPart = String(sequenceNumber).padStart(4, '0');
@@ -48,12 +51,12 @@ async function generateCodeUnique(nom, prenoms) {
     return `${nomPart}${prenomPart}${datePart}${seqPart}`;
   } catch (error) {
     console.error('Erreur génération code unique:', error);
-    // Fallback si erreur
-    const fallbackDate = moment().format('DDMMYY');
+    // Fallback si erreur - utiliser la date de naissance formatée
+    const birthDate = moment(dateNaissance);
+    const fallbackDate = birthDate.isValid() ? birthDate.format('DDMMYY') : moment().format('DDMMYY');
     return `${nom.substring(0, 3).toUpperCase()}${prenoms.substring(0, 1).toUpperCase()}${fallbackDate}0001`;
   }
 }
-
 // Fonction pour générer le matricule IIPEA
 async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
   try {
@@ -199,7 +202,7 @@ exports.addEtudiant = async (req, res) => {
     const hashedPassword = await bcrypt.hash('@elites@', 10);
     
     // Génération des codes
-    const code_unique = await generateCodeUnique(data.etudiant.nom, data.etudiant.prenoms);
+    const code_unique = await generateCodeUnique(data.etudiant.nom, data.etudiant.prenoms, data.etudiant.date_naissance );
     const matricule_iipea = await generateMatriculeIIPEA(
       data.academique.annee_academique_id,
       data.inscription.id_filiere
