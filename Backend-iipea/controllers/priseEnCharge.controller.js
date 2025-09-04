@@ -89,8 +89,8 @@ exports.getPECEnAttente = async (req, res) => {
 //===========================================================================================================================
 
 
-// Récupérer toutes les PEC validées avec les infos étudiant
-exports.getPECValidees = async (req, res) => {
+// Récupérer toutes les PEC traitées (validées ET refusées) avec les infos étudiant
+exports.getPECTraitees = async (req, res) => {
   const client = await db.connect();
   
   try {
@@ -104,6 +104,7 @@ exports.getPECValidees = async (req, res) => {
         p.date_demande,
         p.date_validation,
         p.statut,
+        p.motif_refus,  
         e.id as etudiant_id,
         e.matricule_iipea,
         e.nom,
@@ -125,7 +126,7 @@ exports.getPECValidees = async (req, res) => {
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
       JOIN scolarite s ON e.scolarite_id = s.id
-      WHERE p.statut = 'valide'
+      WHERE p.statut IN ('valide', 'refuse')  
       ORDER BY p.date_validation DESC, e.nom, e.prenoms
     `;
 
@@ -137,31 +138,32 @@ exports.getPECValidees = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Erreur récupération PEC validées:', error);
+    console.error('Erreur récupération PEC traitées:', error);
     res.status(500).json({
       success: false,
-      message: 'Erreur lors de la récupération des prises en charge validées'
+      message: 'Erreur lors de la récupération des prises en charge traitées'
     });
   } finally {
     client.release();
   }
 };
-
-// Récupérer les statistiques des PEC validées
-exports.getStatsPECValidees = async (req, res) => {
+//==================== Récupérer les statistiques des PEC validées======================
+exports.getStatsPECtraitees = async (req, res) => {
   const client = await db.connect();
   
   try {
     const query = `
       SELECT 
-        COUNT(*) as total_pec_validees,
-        SUM(p.montant_reduction) as total_reduction,
-        AVG(p.pourcentage_reduction) as moyenne_reduction,
-        p.type_pec,
-        COUNT(p.type_pec) as count_type
-      FROM prise_en_charge p
-      WHERE p.statut = 'valide'
-      GROUP BY p.type_pec
+        COUNT(*) as total_pec_traitees,
+        COUNT(*) FILTER (WHERE statut = 'valide') as total_validees,
+        COUNT(*) FILTER (WHERE statut = 'refuse') as total_refusees,
+        COALESCE(SUM(montant_reduction), 0) as total_reduction,
+        COALESCE(AVG(montant_reduction), 0) as moyenne_reduction,
+        type_pec,
+        COUNT(*) as count_type
+      FROM prise_en_charge 
+      WHERE statut IN ('valide', 'refuse')
+      GROUP BY type_pec
       ORDER BY count_type DESC
     `;
 
@@ -173,7 +175,7 @@ exports.getStatsPECValidees = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Erreur récupération stats PEC:', error);
+    console.error('Erreur récupération stats PEC traitées:', error);
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la récupération des statistiques'

@@ -11,27 +11,32 @@ exports.getListeClasses = async (req, res) => {
 
     const query = `
       SELECT DISTINCT
-        c.id,
-        c.nom,
-        c.description,
-        aa.annee as annee_academique,
-        aa.etat as annee_etat,
-        COUNT(DISTINCT g.id) as nombre_groupes,
-        COUNT(DISTINCT e.id) as effectif_total,
-        f.nom as filiere,
-        n.libelle as niveau,
-        d.nom as departement
-      FROM classe c
-      LEFT JOIN groupe g ON g.classe_id = c.id
-      LEFT JOIN etudiant e ON e.groupe_id = g.id
-      LEFT JOIN anneeacademique aa ON e.annee_academique_id = aa.id
-      LEFT JOIN filiere f ON c.nom LIKE '%' || f.nom || '%' OR c.nom LIKE '%' || f.sigle || '%'
-      LEFT JOIN niveau n ON c.nom LIKE '%' || n.libelle || '%'
-      LEFT JOIN departement d ON e.departement_id = d.id
-      WHERE ($1::int IS NULL OR aa.id = $1)
-      AND e.departement_id = $2  -- Filtrer par département
-      GROUP BY c.id, c.nom, c.description, aa.annee, aa.etat, f.nom, n.libelle, d.nom
-      ORDER BY c.nom
+  c.id,
+  c.nom,
+  c.description,
+  aa.annee as annee_academique,
+  aa.etat as annee_etat,
+  COUNT(DISTINCT g.id) as nombre_groupes,
+  COUNT(DISTINCT e.id) as effectif_total,
+  -- Récupérer explicitement la filière et le niveau depuis les tables étudiant
+  (SELECT f2.nom FROM filiere f2 
+   JOIN etudiant e2 ON e2.id_filiere = f2.id 
+   WHERE e2.groupe_id IN (SELECT g2.id FROM groupe g2 WHERE g2.classe_id = c.id) 
+   LIMIT 1) as filiere,
+  (SELECT n2.libelle FROM niveau n2 
+   JOIN etudiant e2 ON e2.niveau_id = n2.id 
+   WHERE e2.groupe_id IN (SELECT g2.id FROM groupe g2 WHERE g2.classe_id = c.id) 
+   LIMIT 1) as niveau,
+  d.nom as departement
+FROM classe c
+LEFT JOIN groupe g ON g.classe_id = c.id
+LEFT JOIN etudiant e ON e.groupe_id = g.id
+LEFT JOIN anneeacademique aa ON e.annee_academique_id = aa.id
+LEFT JOIN departement d ON e.departement_id = d.id
+WHERE ($1::int IS NULL OR aa.id = $1)
+AND e.departement_id = $2
+GROUP BY c.id, c.nom, c.description, aa.annee, aa.etat, d.nom
+ORDER BY c.nom
     `;
 
     const result = await client.query(query, [annee_id || null, departement_id]);
@@ -61,14 +66,21 @@ exports.getDetailClasse = async (req, res) => {
     const { id } = req.params;
     
     const query = `
-      SELECT 
+       SELECT 
         c.id,
         c.nom,
         c.description,
         aa.annee as annee_academique,
         aa.etat as annee_etat,
-        f.nom as filiere,
-        n.libelle as niveau,
+        -- Récupération précise de la filière et du niveau
+        (SELECT f2.nom FROM filiere f2 
+         JOIN etudiant e2 ON e2.id_filiere = f2.id 
+         JOIN groupe g2 ON e2.groupe_id = g2.id 
+         WHERE g2.classe_id = c.id LIMIT 1) as filiere,
+        (SELECT n2.libelle FROM niveau n2 
+         JOIN etudiant e2 ON e2.niveau_id = n2.id 
+         JOIN groupe g2 ON e2.groupe_id = g2.id 
+         WHERE g2.classe_id = c.id LIMIT 1) as niveau,
         COUNT(DISTINCT e.id) as effectif_total,
         g.id as groupe_id,
         g.nom as groupe_nom,
@@ -79,10 +91,8 @@ exports.getDetailClasse = async (req, res) => {
       LEFT JOIN etudiant e ON e.groupe_id = g.id
       LEFT JOIN etudiant e_g ON e_g.groupe_id = g.id
       LEFT JOIN anneeacademique aa ON e.annee_academique_id = aa.id
-      LEFT JOIN filiere f ON c.nom LIKE '%' || f.nom || '%' OR c.nom LIKE '%' || f.sigle || '%'
-      LEFT JOIN niveau n ON c.nom LIKE '%' || n.libelle || '%'
       WHERE c.id = $1
-      GROUP BY c.id, c.nom, c.description, aa.annee, aa.etat, f.nom, n.libelle, g.id, g.nom, g.capacite_max
+      GROUP BY c.id, c.nom, c.description, aa.annee, aa.etat, g.id, g.nom, g.capacite_max
       ORDER BY g.nom
     `;
 

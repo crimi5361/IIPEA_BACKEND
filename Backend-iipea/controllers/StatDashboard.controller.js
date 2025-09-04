@@ -8,7 +8,7 @@ exports.getDashboardStats = async (req, res) => {
   try {
     const results = {};
 
-    // 1. Nombre d'étudiants - CORRIGÉ: "Inscrit" au lieu de "inscrit"
+    // 1. Nombre d'étudiants inscrits
     const nbEtudiants = await db.query(`
       SELECT COUNT(*) AS total
       FROM etudiant
@@ -16,7 +16,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.totalEtudiants = parseInt(nbEtudiants.rows[0].total);
 
-    // 2. Répartition par statut scolaire (NOUVEAU)
+    // 2. Répartition par statut scolaire (Affecté/Non affecté)
     const repartitionStatut = await db.query(`
       SELECT 
         statut_scolaire,
@@ -27,11 +27,18 @@ exports.getDashboardStats = async (req, res) => {
       ORDER BY statut_scolaire
     `, [anneeAcademiqueId, departementId]);
     
-    // Formatage des résultats par statut
+    // Formatage des résultats par statut scolaire
     results.repartitionStatut = repartitionStatut.rows;
     results.totalAffectes = repartitionStatut.rows.find(row => row.statut_scolaire === 'Affecté')?.total || 0;
     results.totalNonAffectes = repartitionStatut.rows.find(row => row.statut_scolaire === 'Non affecté')?.total || 0;
-    results.totalEnAttente = repartitionStatut.rows.find(row => row.statut_scolaire === 'en_attente')?.total || 0;
+
+    // 2b. Nombre d'étudiants en attente (standing = 'en attente')
+    const enAttente = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM etudiant
+      WHERE annee_academique_id = $1 AND departement_id = $2 AND standing = 'en attente'
+    `, [anneeAcademiqueId, departementId]);
+    results.totalEnAttente = parseInt(enAttente.rows[0].total);
 
     // 3. Montant total scolarité
     const scolariteTotale = await db.query(`
@@ -70,7 +77,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.totalClasses = parseInt(nbClasses.rows[0].total_classes);
 
-    // 7. Montant total kits perçus - CORRIGÉ: "Inscrit"
+    // 7. Montant total kits perçus
     const totalKits = await db.query(`
       SELECT COALESCE(SUM(k.montant), 0) AS total
       FROM kit k
@@ -79,7 +86,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.totalKits = parseFloat(totalKits.rows[0].total);
 
-    // 8. Nombre total de kits perçus - NOUVEAU
+    // 8. Nombre total de kits perçus
     const nbKits = await db.query(`
       SELECT COUNT(*) AS total
       FROM kit k
@@ -88,7 +95,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.nbKits = parseInt(nbKits.rows[0].total);
 
-    // 9. Montant total réduction (prise en charge) - CORRIGÉ: "Inscrit"
+    // 9. Montant total réduction (prise en charge)
     const totalReduction = await db.query(`
       SELECT COALESCE(SUM(p.montant_reduction), 0) AS total
       FROM prise_en_charge p
@@ -97,7 +104,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.totalReduction = parseFloat(totalReduction.rows[0].total);
 
-    // 10. Nombre total de prises en charge valides - NOUVEAU
+    // 10. Nombre total de prises en charge valides
     const nbPrisesEnCharge = await db.query(`
       SELECT COUNT(*) AS total
       FROM prise_en_charge p
@@ -106,7 +113,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.nbPrisesEnCharge = parseInt(nbPrisesEnCharge.rows[0].total);
 
-    // 11. Répartition par filière - CORRIGÉ: "Inscrit"
+    // 11. Répartition par filière
     const repartitionFiliere = await db.query(`
       SELECT f.nom AS filiere, COUNT(e.id) AS total
       FROM etudiant e
@@ -117,7 +124,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.repartitionFiliere = repartitionFiliere.rows;
 
-    // 12. Répartition par cursus - CORRIGÉ: "Inscrit"
+    // 12. Répartition par cursus
     const repartitionCurcus = await db.query(`
       SELECT c.type_parcours AS curcus, COUNT(e.id) AS total
       FROM etudiant e
@@ -128,7 +135,7 @@ exports.getDashboardStats = async (req, res) => {
     `, [anneeAcademiqueId, departementId]);
     results.repartitionCurcus = repartitionCurcus.rows;
 
-    // 13. Répartition par statut de standing (NOUVEAU)
+    // 13. Répartition par standing (Inscrit/en attente)
     const repartitionStanding = await db.query(`
       SELECT 
         standing,

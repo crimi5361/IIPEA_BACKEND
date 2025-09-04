@@ -506,21 +506,21 @@ exports.validerPEC = async (req, res) => {
       // Pour la réponse, on garde les valeurs calculées
       nouveauVerse = scolariteVerse; // Le montant versé réel ne change pas
 
-    } else if (action === 'refuser') {
-      if (!motif_refus) {
-        throw new Error('Le motif de refus est requis');
-      }
+    // Dans validerPEC, modifiez la partie refus :
+} else if (action === 'refuser') {
+  // Utiliser le motif fourni ou un motif par défaut
+  const motifFinal = motif_refus || "Plus de prise en charge disponible";
+  
+  await client.query(
+    `UPDATE prise_en_charge 
+     SET statut = 'refuse', 
+         date_validation = $1, 
+         valide_par = $2, 
+         motif_refus = $3
+     WHERE id = $4`,
+    [new Date(), adminId, motifFinal, pec_id]
+  );
 
-      // Pour le refus, on ne change rien à la scolarité, seulement le statut de la PEC
-      await client.query(
-        `UPDATE prise_en_charge 
-         SET statut = 'refuse', 
-             date_validation = $1, 
-             valide_par = $2, 
-             motif_refus = $3
-         WHERE id = $4`,
-        [new Date(), adminId, motif_refus, pec_id]
-      );
     } else {
       throw new Error('Action non valide: doit être "valider" ou "refuser"');
     }

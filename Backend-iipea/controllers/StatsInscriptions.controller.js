@@ -39,7 +39,7 @@ exports.getStatsInscriptions = async (req, res) => {
       FROM etudiant e
       WHERE e.annee_academique_id = $1 
         AND e.departement_id = $2 
-        AND e.statut_scolaire = 'en attente'
+        AND e.standing = 'en attente'  
         ${dateCondition}
     `, dateParams);
 
@@ -53,14 +53,14 @@ exports.getStatsInscriptions = async (req, res) => {
         AND DATE(e.date_inscription) = CURRENT_DATE
     `, [anneeAcademiqueId, departementId]);
 
-    // 5. Inscriptions par utilisateur (CORRIGÉ avec conversion de type et GROUP BY complet)
+    // 5. Inscriptions par utilisateur
     const inscriptionsParUtilisateur = await db.query(`
       SELECT 
         u.id AS utilisateur_id,
         u.nom AS utilisateur_nom,
         u.email AS utilisateur_email,
         COUNT(e.id) AS total_inscrits,
-        SUM(CASE WHEN e.statut_scolaire = 'en attente' THEN 1 ELSE 0 END) AS en_attente,
+        SUM(CASE WHEN e.standing = 'en attente' THEN 1 ELSE 0 END) AS en_attente,  
         SUM(CASE WHEN e.standing = 'Inscrit' THEN 1 ELSE 0 END) AS confirmes
       FROM utilisateur u
       LEFT JOIN etudiant e ON u.id = e.inscrit_par::integer
@@ -71,7 +71,7 @@ exports.getStatsInscriptions = async (req, res) => {
       ORDER BY total_inscrits DESC
     `, dateParams);
 
-    // 6. Inscriptions journalières (pour graphique)
+    // 6. Inscriptions journalières
     const inscriptionsJournalieres = await db.query(`
       SELECT 
         DATE(date_inscription) AS date,
@@ -85,7 +85,7 @@ exports.getStatsInscriptions = async (req, res) => {
       ORDER BY date DESC
     `, dateParams);
 
-    // 7. Statistiques par statut (optionnel)
+    // 7. Statistiques par statut
     const statsParStatut = await db.query(`
       SELECT 
         statut_scolaire,
@@ -98,6 +98,34 @@ exports.getStatsInscriptions = async (req, res) => {
       ORDER BY nombre DESC
     `, dateParams);
 
+    // 8. NOUVEAU : Paiements par utilisateur (SIMPLIFIÉ)
+    const paiementsParUtilisateur = await db.query(`
+      SELECT 
+        u.id AS utilisateur_id,
+        u.nom AS utilisateur_nom,
+        u.email AS utilisateur_email,
+        COUNT(p.id) AS nombre_paiements
+      FROM utilisateur u
+      LEFT JOIN paiement p ON u.id::varchar = p.effectue_par
+      LEFT JOIN etudiant e ON p.etudiant_id = e.id
+      WHERE p.id IS NOT NULL
+        AND e.annee_academique_id = $1
+        AND e.departement_id = $2
+        ${startDate && endDate ? 'AND DATE(p.date_paiement) BETWEEN $3 AND $4' : ''}
+      GROUP BY u.id, u.nom, u.email
+      ORDER BY nombre_paiements DESC
+    `, dateParams);
+
+    // 9. NOUVEAU : Total des paiements (SIMPLIFIÉ)
+    const totalPaiements = await db.query(`
+      SELECT COUNT(p.id) AS nombre_total_paiements
+      FROM paiement p
+      JOIN etudiant e ON p.etudiant_id = e.id
+      WHERE e.annee_academique_id = $1
+        AND e.departement_id = $2
+        ${startDate && endDate ? 'AND DATE(p.date_paiement) BETWEEN $3 AND $4' : ''}
+    `, dateParams);
+
     res.json({
       totalEtudiants: parseInt(nbEtudiants.rows[0].total),
       inscriptionsAujourdhui: parseInt(aujourdhui.rows[0].total),
@@ -106,6 +134,11 @@ exports.getStatsInscriptions = async (req, res) => {
       inscriptionsParUtilisateur: inscriptionsParUtilisateur.rows,
       inscriptionsJournalieres: inscriptionsJournalieres.rows,
       statsParStatut: statsParStatut.rows,
+      
+      // Nouvelles données de paiements (TRÈS SIMPLIFIÉES)
+      paiementsParUtilisateur: paiementsParUtilisateur.rows,
+      nombreTotalPaiements: parseInt(totalPaiements.rows[0]?.nombre_total_paiements || 0),
+      
       periode: {
         startDate: startDate || null,
         endDate: endDate || null,
@@ -154,7 +187,7 @@ exports.getStatsDetaillees = async (req, res) => {
       SELECT 
         -- Par statut
         COUNT(*) FILTER (WHERE standing = 'Inscrit') AS total_inscrits,
-        COUNT(*) FILTER (WHERE statut_scolaire = 'en attente') AS total_attente,
+        COUNT(*) FILTER (WHERE standing = 'en attente') AS total_attente,
         
         -- Par genre
         COUNT(*) FILTER (WHERE sexe = 'M') AS hommes,
@@ -162,10 +195,7 @@ exports.getStatsDetaillees = async (req, res) => {
         
         -- Par période
         COUNT(*) FILTER (WHERE DATE(date_inscription) = CURRENT_DATE) AS aujourdhui,
-        COUNT(*) FILTER (WHERE DATE(date_inscription) = CURRENT_DATE - INTERVAL '1 day') AS hier,
-        
-        -- Moyenne quotidienne
-        ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT DATE(date_inscription)), 0), 1) AS moyenne_quotidienne
+        COUNT(*) FILTER (WHERE DATE(date_inscription) = CURRENT_DATE - INTERVAL '1 day') AS hier
         
       FROM etudiant
       WHERE annee_academique_id = $1 
