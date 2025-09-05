@@ -410,6 +410,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.code_unique,
         e.annee_bac,
         e.serie_bac,
+        e.ip_ministere,
         e.statut_scolaire,
         e.etablissement_origine,
         e.inscrit_par,
