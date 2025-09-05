@@ -16,7 +16,6 @@ function generateRandomCode(length = 6) {
   return Array.from({ length }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
 }
 
-// Fonction pour générer le code unique selon le nouveau format
 // Fonction pour générer le code unique selon le nouveau format AVEC DATE DE NAISSANCE
 async function generateCodeUnique(nom, prenoms, dateNaissance) {
   try {
@@ -30,14 +29,14 @@ async function generateCodeUnique(nom, prenoms, dateNaissance) {
     const prenomParts = cleanPrenoms.split(' ');
     const prenomPart = prenomParts[0].substring(0, 1).toUpperCase();
     
-    // Utiliser la DATE DE NAISSANCE au format JJMMAA au lieu de la date actuelle
+    // Utiliser la DATE DE NAISSANCE au format JJMMAA
     const birthDate = moment(dateNaissance);
     const day = String(birthDate.date()).padStart(2, '0');
     const month = String(birthDate.month() + 1).padStart(2, '0');
     const year = String(birthDate.year()).slice(-2);
     const datePart = `${day}${month}${year}`;
     
-    // Compteur séquentiel pour les homonymes (même nom + même initiale + même date de naissance)
+    // Compteur séquentiel pour les homonymes
     const countRes = await db.query(
       `SELECT COUNT(*) FROM etudiant 
        WHERE nom = $1 
@@ -51,16 +50,16 @@ async function generateCodeUnique(nom, prenoms, dateNaissance) {
     return `${nomPart}${prenomPart}${datePart}${seqPart}`;
   } catch (error) {
     console.error('Erreur génération code unique:', error);
-    // Fallback si erreur - utiliser la date de naissance formatée
     const birthDate = moment(dateNaissance);
     const fallbackDate = birthDate.isValid() ? birthDate.format('DDMMYY') : moment().format('DDMMYY');
     return `${nom.substring(0, 3).toUpperCase()}${prenoms.substring(0, 1).toUpperCase()}${fallbackDate}0001`;
   }
 }
+
 // Fonction pour générer le matricule IIPEA
 async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
   try {
-    // Récupérer l'année académique (2 derniers chiffres de la deuxième partie)
+    // Récupérer l'année académique
     const anneeRes = await db.query('SELECT annee FROM anneeacademique WHERE id = $1', [anneeAcademiqueId]);
     let annee = '00';
     
@@ -75,7 +74,7 @@ async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
     const filiereRes = await db.query('SELECT sigle FROM filiere WHERE id = $1', [filiereId]);
     const sigle = filiereRes.rows[0]?.sigle || 'XX';
 
-    // Récupérer le dernier numéro séquentiel pour cette combinaison
+    // Récupérer le dernier numéro séquentiel
     const countRes = await db.query(
       `SELECT COUNT(*) FROM etudiant 
        WHERE matricule_iipea LIKE $1 || $2 || '%'`,
@@ -83,13 +82,11 @@ async function generateMatriculeIIPEA(anneeAcademiqueId, filiereId) {
     );
     const sequenceNumber = (parseInt(countRes.rows[0].count) + 1).toString().padStart(4, '0');
 
-    // Générer une partie aléatoire (4 caractères au lieu de 6 pour raccourcir)
     const randomPart = generateRandomCode(4);
 
     return `${annee}${sigle}${randomPart}${sequenceNumber}`;
   } catch (error) {
     console.error('Erreur génération matricule IIPEA:', error);
-    // Fallback si erreur
     return `${new Date().getFullYear().toString().slice(-2)}${generateRandomCode(6)}`;
   }
 }
@@ -123,6 +120,8 @@ exports.addEtudiant = async (req, res) => {
 
   // Démarrer une transaction
   const client = await db.connect();
+  let photoUrl = null;
+
   try {
     await client.query('BEGIN');
 
@@ -163,7 +162,6 @@ exports.addEtudiant = async (req, res) => {
     }
 
     // Gestion de la photo
-    let photoUrl = null;
     if (req.files?.photo?.[0]) {
       const photoFile = req.files.photo[0];
       const validation = validatePhotoFile(photoFile);
@@ -202,21 +200,22 @@ exports.addEtudiant = async (req, res) => {
     const hashedPassword = await bcrypt.hash('@elites@', 10);
     
     // Génération des codes
-    const code_unique = await generateCodeUnique(data.etudiant.nom, data.etudiant.prenoms, data.etudiant.date_naissance );
+    const code_unique = await generateCodeUnique(data.etudiant.nom, data.etudiant.prenoms, data.etudiant.date_naissance);
     const matricule_iipea = await generateMatriculeIIPEA(
       data.academique.annee_academique_id,
       data.inscription.id_filiere
     );
 
-    // 1. Insertion de l'étudiant
+    // 1. Insertion de l'étudiant avec le champ ip_ministere
     const etudiantQuery = `
       INSERT INTO etudiant (
         matricule, nom, prenoms, date_naissance, lieu_naissance, pays_naissance, telephone, email,
         lieu_residence, contact_parent, nom_parent_1, nom_parent_2, code_unique, annee_bac, serie_bac, 
         etablissement_origine, inscrit_par, photo_url, departement_id, annee_academique_id, groupe_id,
         niveau_id, statut_scolaire, nationalite, standing, numero_table, sexe, password,
-        curcus_id, id_filiere, date_inscription, contact_etudiant, contact_parent_2, matricule_iipea
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), $31, $32, $33)
+        curcus_id, id_filiere, date_inscription, contact_etudiant, contact_parent_2, matricule_iipea,
+        ip_ministere  -- NOUVEAU CHAMP AJOUTÉ
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), $31, $32, $33, $34)
       RETURNING id
     `;
 
@@ -253,7 +252,8 @@ exports.addEtudiant = async (req, res) => {
       data.inscription.id_filiere,
       data.etudiant.telephone, // contact_etudiant
       data.etudiant.contact_parent_2 || null,
-      matricule_iipea
+      matricule_iipea,
+      data.academique.ip_ministere || null  // NOUVEAU CHAMP - peut être null
     ];
 
     const etudiantResult = await client.query(etudiantQuery, etudiantValues);
@@ -304,6 +304,9 @@ exports.addEtudiant = async (req, res) => {
 
     // Journalisation de l'action
     console.log(`Nouvel étudiant inscrit: ${data.etudiant.nom} ${data.etudiant.prenoms} (ID: ${etudiantId})`);
+    if (data.academique.ip_ministere) {
+      console.log(`IP Ministère fourni: ${data.academique.ip_ministere}`);
+    }
 
     return res.status(201).json({
       success: true,
@@ -315,7 +318,8 @@ exports.addEtudiant = async (req, res) => {
         matricule: data.academique.matricule,
         matricule_iipea,
         contact_etudiant: data.etudiant.telephone,
-        contact_parent_2: data.etudiant.contact_parent_2 || null
+        contact_parent_2: data.etudiant.contact_parent_2 || null,
+        ip_ministere: data.academique.ip_ministere || null  // Retourner aussi l'IP ministère
       }
     });
 
