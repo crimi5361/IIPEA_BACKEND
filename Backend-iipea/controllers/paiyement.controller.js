@@ -121,8 +121,10 @@ exports.createPaiement = async (req, res) => {
 
     // 4. Récupération des infos étudiant AVEC TYPE DE FILIERE
     const etudiantQuery = `
-      SELECT 
+     SELECT 
         e.id, 
+        e.curcus_id,
+        c.type_parcours as cursus,
         f.nom as filiere, 
         f.sigle as filiere_sigle, 
         f.type_filiere_id,
@@ -135,6 +137,7 @@ exports.createPaiement = async (req, res) => {
         s.statut_etudiant,
         p.montant_reduction
       FROM etudiant e
+	    JOIN curcus c ON e.curcus_id = c.id
       JOIN scolarite s ON e.scolarite_id = s.id
       JOIN filiere f ON e.id_filiere = f.id
       JOIN typefiliere tf ON f.type_filiere_id = tf.id
@@ -210,6 +213,7 @@ exports.createPaiement = async (req, res) => {
     // 7. Gestion spécifique pour le premier paiement - AVEC CAPACITÉ DYNAMIQUE
     if (isPremierPaiement) {
       const nomClasse = `${etudiant.filiere} ${etudiant.filiere_sigle} ${etudiant.niveau}`;
+      const descriptionClass = `${etudiant.filiere} ${etudiant.filiere_sigle} ${etudiant.niveau}  ${etudiant.cursus}`;
       
       // Créer ou trouver la classe
       let classeResult = await client.query(
@@ -223,7 +227,7 @@ exports.createPaiement = async (req, res) => {
         const newClasseResult = await client.query(
           `INSERT INTO classe (nom, description) 
            VALUES ($1, $2) RETURNING id`,
-          [nomClasse, `Classe pour ${nomClasse}`]
+          [nomClasse, `Classe pour ${descriptionClass}`]
         );
         classeId = newClasseResult.rows[0].id;
       }

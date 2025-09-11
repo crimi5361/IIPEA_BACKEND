@@ -18,4 +18,5 @@ router.get('/annees-academiques', authenticateToken, classesController.getAnnees
 // Ancienne route (conservée pour compatibilité)
 router.get('/classes', authenticateToken, classesController.getClassesAvecGroupes);
 
+
 module.exports = router;

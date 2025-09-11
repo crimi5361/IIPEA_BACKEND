@@ -185,19 +185,21 @@ exports.getDetailGroupe = async (req, res) => {
     // Ensuite récupérer les étudiants du groupe
     const etudiantsQuery = `
       SELECT 
-        e.id,
-        e.matricule_iipea,
-        e.nom,
-        e.prenoms,
-        e.telephone,
-        e.email,
-        e.photo_url,
-        f.nom as filiere,
-        n.libelle as niveau,
-        e.statut_scolaire
+          e.id,
+          e.matricule_iipea,
+          e.nom,
+          e.prenoms,
+          e.telephone,
+          e.email,
+          e.photo_url,
+          f.nom as filiere,
+          n.libelle as niveau,
+          c.type_parcours as cursus, 
+          e.statut_scolaire
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
+      JOIN curcus c ON e.curcus_id = c.id  
       WHERE e.groupe_id = $1
       ORDER BY e.nom, e.prenoms
     `;

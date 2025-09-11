@@ -53,7 +53,13 @@ const apiRoutes = [
   {path: "/api/classes", route: require('./routes/classes.routes')} ,
   {path: "/api/StatDashboard", route: require('./routes/StatDashboard.routes')},
   {path: "/api/CertificatScolarite", route: require('./routes/CertificatScolarite.routes')},
+  {path: "/api/CertificaFrentation", route : require('./routes/CertificatFrequentation.routes')},
   {path:"/api/StatsInscriptions", route: require('./routes/StatsInscriptions.routes')},
+  {path:"/api/maquettes", route: require('./routes/maquette.routes')},
+  {path:"/api/semestres", route: require('./routes/semestre.routes')},
+  {path:"/api/categorie", route: require('./routes/categorie.routes')},
+  {path:"/api/ues", route: require('./routes/ue.routes')},
+  {path:"/api/matiere", route: require('./routes/matiere.routes')},
   // {path: "/api/divisionGroupe", route: require('./routes/divisionGroupe.routes')}
 
 
