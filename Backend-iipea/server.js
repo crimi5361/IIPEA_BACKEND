@@ -60,6 +60,7 @@ const apiRoutes = [
   {path:"/api/categorie", route: require('./routes/categorie.routes')},
   {path:"/api/ues", route: require('./routes/ue.routes')},
   {path:"/api/matiere", route: require('./routes/matiere.routes')},
+  {path:"/api/statistiques", route: require('./routes/StatistiqueGeneral.routes')},
   // {path: "/api/divisionGroupe", route: require('./routes/divisionGroupe.routes')}
 
 
