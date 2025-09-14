@@ -33,12 +33,12 @@ exports.createUE = async (req, res) => {
 };
 
 
-exports.getAllUes = async (req, res) => {
-  try {
-    const result = await db.query('SELECT id, libelle FROM ue');
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Erreur lors de la récupération des UEs:', error);
-    res.status(500).json({ success: false, message: 'Erreur serveur' });
-  }
-};
+// exports.getAllUes = async (req, res) => {
+//   try {
+//     const result = await db.query('SELECT id, libelle FROM ue');
+//     res.json(result.rows);
+//   } catch (error) {
+//     console.error('Erreur lors de la récupération des UEs:', error);
+//     res.status(500).json({ success: false, message: 'Erreur serveur' });
+//   }
+// };

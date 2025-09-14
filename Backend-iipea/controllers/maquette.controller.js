@@ -186,6 +186,9 @@ exports.getMaquetteDetail = async (req, res) => {
 };
 
 // UE d'une maquette
+// controllers/maquette.controller.js
+
+
 exports.getMaquetteUes = async (req, res) => {
   try {
     const { id } = req.params;
@@ -205,7 +208,7 @@ exports.getMaquetteUes = async (req, res) => {
       ORDER BY s.nom, u.libelle
     `;
     
-    const result = await pool.query(query, [id]);
+    const result = await db.query(query, [id]);
     res.json(result.rows);
   } catch (error) {
     console.error('Erreur lors de la récupération des UE:', error);
