@@ -7,18 +7,17 @@ exports.createMatiere = async (req, res) => {
       nom,
       coefficient,
       ue_id,
-      volume_horaire_cm,
-      taux_horaire_cm,
-      volume_horaire_td,
-      taux_horaire_td,
+      volume_horaire_cm = 0, // Valeur par défaut
+      taux_horaire_cm = 0,   // Valeur par défaut
+      volume_horaire_td = 0, // Valeur par défaut
+      taux_horaire_td = 0,   // Valeur par défaut
     } = req.body;
     
-    // Validation des données
-    if (!nom || !coefficient || !ue_id || !volume_horaire_cm || 
-        !taux_horaire_cm || !volume_horaire_td || !taux_horaire_td) {
+    // Validation des données - seulement les champs vraiment obligatoires
+    if (!nom || !coefficient || !ue_id) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Tous les champs sont requis' 
+        message: 'Les champs nom, coefficient et ue_id sont requis' 
       });
     }
     
@@ -41,7 +40,7 @@ exports.createMatiere = async (req, res) => {
       taux_horaire_td,
     ];
     
-    const result = await db.query(query, values); // Changé pool.query en db.query
+    const result = await db.query(query, values);
     
     res.status(201).json({ 
       success: true, 
