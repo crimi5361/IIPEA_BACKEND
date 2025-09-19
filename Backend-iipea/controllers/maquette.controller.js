@@ -172,7 +172,7 @@ exports.getMaquetteDetail = async (req, res) => {
       WHERE m.id = $1
     `;
     
-    const result = await pool.query(query, [id]);
+    const result = await db.query(query, [id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Maquette non trouvée' });
@@ -238,7 +238,7 @@ exports.getMaquetteMatieres = async (req, res) => {
       ORDER BY u.libelle, m.nom
     `;
     
-    const result = await pool.query(query, [id]);
+    const result = await db.query(query, [id]);
     res.json(result.rows);
   } catch (error) {
     console.error('Erreur lors de la récupération des matières:', error);

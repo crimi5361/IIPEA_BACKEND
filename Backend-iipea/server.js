@@ -64,6 +64,7 @@ const apiRoutes = [
   {path:"/api/donneeespaceetudiant", route: require('./routes/donneeespaceetudiant.routes')},
   {path:"/api/etudiant-payement-espace", route: require('./routes/PaiementEespaceetudiant.routes')},
   {path:"/api/detailaffichageMaquette", route: require('./routes/DetailAffichageMaquette.routes')}, 
+  {path:"/api/public", route: require('./routes/public.routes')},
   // {path: "/api/divisionGroupe", route: require('./routes/divisionGroupe.routes')}
 
 
