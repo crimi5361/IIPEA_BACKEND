@@ -65,6 +65,7 @@ const apiRoutes = [
   {path:"/api/etudiant-payement-espace", route: require('./routes/PaiementEespaceetudiant.routes')},
   {path:"/api/detailaffichageMaquette", route: require('./routes/DetailAffichageMaquette.routes')}, 
   {path:"/api/public", route: require('./routes/public.routes')},
+  {path:"/api/emploiDuTemps", route: require('./routes/EDT.routes')},
   // {path: "/api/divisionGroupe", route: require('./routes/divisionGroupe.routes')}
 
 

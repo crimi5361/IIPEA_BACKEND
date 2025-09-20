@@ -23,6 +23,7 @@ exports.getStudentProfile = async (req, res) => {
         d.dernier_diplome,
         d.fiche_orientation,
         c.type_parcours,
+        g.id as groupe_id,
         g.nom as groupe_nom,
         g.capacite_max,
         cl.nom as classe_nom,
@@ -91,6 +92,7 @@ exports.getStudentProfile = async (req, res) => {
         sigle_filiere: studentData.filiere_sigle,
         type_filiere: studentData.type_filiere_libelle,
         type_parcours: studentData.type_parcours,
+        groupe_id: studentData.groupe_id,
         groupe: studentData.groupe_nom,
         capacite_groupe: studentData.capacite_max,
         classe: studentData.classe_nom
