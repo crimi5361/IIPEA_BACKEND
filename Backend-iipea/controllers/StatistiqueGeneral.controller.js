@@ -54,20 +54,23 @@ exports.getStatisticsByNiveau = async (req, res) => {
                 COUNT(*) as total
             FROM etudiant e
             INNER JOIN niveau n ON e.niveau_id = n.id
-            WHERE e.annee_academique_id = $1 AND e.departement_id = $2
+            WHERE e.annee_academique_id = $1 AND e.departement_id = $2 AND e.standing='Inscrit'
             GROUP BY n.libelle
             ORDER BY 
-                CASE 
-                    WHEN n.libelle LIKE 'LICENCE 1' THEN 1
-                    WHEN n.libelle LIKE 'LICENCE 2' THEN 2
-                    WHEN n.libelle LIKE 'LICENCE 3' THEN 3
-                    WHEN n.libelle LIKE 'LICENCE 1 PRO' THEN 4
-                    WHEN n.libelle LIKE 'LICENCE 2 PRO' THEN 5
-                    WHEN n.libelle LIKE 'MASTER 1' THEN 6
-                    WHEN n.libelle LIKE 'MASTER 2' THEN 7
-                    WHEN n.libelle LIKE 'BTS 1' THEN 8
-                    WHEN n.libelle LIKE 'BTS 2' THEN 9
-                    ELSE 10
+                 CASE 
+                    WHEN n.libelle LIKE 'BTS 1' THEN 1
+                    WHEN n.libelle LIKE 'BTS 2' THEN 2
+                    WHEN n.libelle LIKE 'LICENCE 1' THEN 3
+                    WHEN n.libelle LIKE 'LICENCE 2' THEN 4
+                    WHEN n.libelle LIKE 'LICENCE 3' THEN 5
+                    WHEN n.libelle LIKE 'LICENCE 1 PRO' THEN 6
+                    WHEN n.libelle LIKE 'LICENCE 2 PRO' THEN 7
+                    WHEN n.libelle LIke 'LICENCE 3 PRO' THEN 8
+                    WHEN n.libelle LIKE 'MASTER 1' THEN 9
+                    WHEN n.libelle LIKE 'MASTER 2' THEN 10
+                    WHEN n.libelle LIKE 'MASTER 1 PRO' THEN 11
+                    WHEN n.libelle LIKE 'MASTER 2 PRO' THEN 12
+                    ELSE 13
                 END
         `;
 

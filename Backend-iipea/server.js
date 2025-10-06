@@ -6,7 +6,11 @@ const path = require('path');
 
 const app = express();
 
-// Configuration CORS améliorée
+// === CONFIGURATION EJS ===
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+// Configuration CORS
 const corsOptions = {
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true,
@@ -19,19 +23,25 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
-app.use('/uploads', express.static('uploads'));
+
+// === SERVIR LES FICHIERS STATIQUES EN PREMIER ===
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/public', express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, path) => {
+    console.log('📁 Fichier statique servi:', path);
+  }
+}));
+
+// Middleware de logging
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
   next();
 });
 
-// Logger des requêtes
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
+// === CHARGEMENT DES ROUTES API ===
+console.log('🔍 Chargement des routes...');
 
-// Routes
+// Routes API (COMMENTEZ temporairement la route /api/public)
 const apiRoutes = [
   { path: '/api/auth', route: require('./routes/auth.routes') },
   { path: '/api/permissions', route: require('./routes/permission.routes') },
@@ -44,56 +54,64 @@ const apiRoutes = [
   { path: '/api/annees', route: require('./routes/anne.routes') },
   { path: '/api/curcus', route: require('./routes/curcus.routes') },
   { path: '/api/etudiants', route: require('./routes/etudiant.routes') },
-  {path: '/api/niveaux', route: require('./routes/niveau.routes')},
-  {path: "/api/paiements", route: require('./routes/payement.routes')},
-  {path: "/api/data", route: require('./routes/data.routes')},
-  {path: "/api/priseEnCharge", route: require('./routes/priseEnCharge.routes')},
-  {path: "/api/kit", route: require('./routes/kit.routes')},
-  {path: "/api/effectifs", route: require('./routes/effectifs.routes')},
-  {path: "/api/classes", route: require('./routes/classes.routes')} ,
-  {path: "/api/StatDashboard", route: require('./routes/StatDashboard.routes')},
-  {path: "/api/CertificatScolarite", route: require('./routes/CertificatScolarite.routes')},
-  {path: "/api/CertificaFrentation", route : require('./routes/CertificatFrequentation.routes')},
-  {path:"/api/StatsInscriptions", route: require('./routes/StatsInscriptions.routes')},
-  {path:"/api/maquettes", route: require('./routes/maquette.routes')},
-  {path:"/api/semestres", route: require('./routes/semestre.routes')},
-  {path:"/api/categorie", route: require('./routes/categorie.routes')},
-  {path:"/api/ues", route: require('./routes/ue.routes')},
-  {path:"/api/matiere", route: require('./routes/matiere.routes')},
-  {path:"/api/statistiques", route: require('./routes/StatistiqueGeneral.routes')},
-  {path:"/api/donneeespaceetudiant", route: require('./routes/donneeespaceetudiant.routes')},
-  {path:"/api/etudiant-payement-espace", route: require('./routes/PaiementEespaceetudiant.routes')},
-  {path:"/api/detailaffichageMaquette", route: require('./routes/DetailAffichageMaquette.routes')}, 
-  {path:"/api/public", route: require('./routes/public.routes')},
-  {path:"/api/emploiDuTemps", route: require('./routes/EDT.routes')},
-  // {path: "/api/divisionGroupe", route: require('./routes/divisionGroupe.routes')}
-
+  { path: '/api/niveaux', route: require('./routes/niveau.routes') },
+  { path: "/api/paiements", route: require('./routes/payement.routes') },
+  { path: "/api/data", route: require('./routes/data.routes') },
+  { path: "/api/priseEnCharge", route: require('./routes/priseEnCharge.routes') },
+  { path: "/api/kit", route: require('./routes/kit.routes') },
+  { path: "/api/effectifs", route: require('./routes/effectifs.routes') },
+  { path: "/api/classes", route: require('./routes/classes.routes') },
+  { path: "/api/StatDashboard", route: require('./routes/StatDashboard.routes') },
+  { path: "/api/CertificatScolarite", route: require('./routes/CertificatScolarite.routes') },
+  { path: "/api/CertificaFrentation", route: require('./routes/CertificatFrequentation.routes') },
+  { path: "/api/StatsInscriptions", route: require('./routes/StatsInscriptions.routes') },
+  { path: "/api/maquettes", route: require('./routes/maquette.routes') },
+  { path: "/api/semestres", route: require('./routes/semestre.routes') },
+  { path: "/api/categorie", route: require('./routes/categorie.routes') },
+  { path: "/api/ues", route: require('./routes/ue.routes') },
+  { path: "/api/matiere", route: require('./routes/matiere.routes') },
+  { path: "/api/statistiques", route: require('./routes/StatistiqueGeneral.routes') },
+  { path: "/api/donneeespaceetudiant", route: require('./routes/donneeespaceetudiant.routes') },
+  { path: "/api/etudiant-payement-espace", route: require('./routes/PaiementEespaceetudiant.routes') },
+  { path: "/api/detailaffichageMaquette", route: require('./routes/DetailAffichageMaquette.routes') }, 
+  // { path: "/api/public", route: require('./routes/public.routes') }, // ← COMMENTÉE TEMPORAIREMENT
+  { path: "/api/emploiDuTemps", route: require('./routes/EDT.routes') },
+  { path: "/api/Certificat_Scolarite", route: require('./routes/Certificat_scolarite.routes') },
+  { path: "/api/certificats-frequentation", route: require('./routes/Certificat_frequentation.routes') },
 
 ];
 
+// Chargement des routes
 apiRoutes.forEach(route => {
   app.use(route.path, route.route);
+  console.log(`✅ Route chargée: ${route.path}`);
 });
 
-// Health Check
+console.log('🎉 Routes API chargées avec succès!');
+
+// Routes de base
+app.get('/test-ejs', (req, res) => {
+  res.render('test', { 
+    title: 'Test EJS',
+    message: 'EJS est correctement configuré!'
+  });
+});
+
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'healthy' });
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Gestion des erreurs
 app.use((err, req, res, next) => {
   console.error(`[ERROR] ${err.stack}`);
-  res.status(err.status || 500).json({
-    error: {
-      message: err.message,
-      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-    }
-  });
+  res.status(500).json({ error: err.message });
 });
 
-// Démarrer le serveur
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server ready at http://localhost:${PORT}`);
-  console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📁 Dossier public: ${path.join(__dirname, 'public')}`);
 });
