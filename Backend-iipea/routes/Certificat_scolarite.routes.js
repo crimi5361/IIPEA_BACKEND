@@ -17,6 +17,7 @@ function generateQRCodeValue(studentData) {
     return JSON.stringify(data);
 }
 
+// Fonction pour récupérer tous les étudiants d'un département
 async function getAllStudentsByDepartement(departementId) {
     try {
         const query = `
@@ -35,6 +36,78 @@ async function getAllStudentsByDepartement(departementId) {
         }));
     } catch (error) {
         console.error('❌ Erreur récupération étudiants:', error);
+        throw error;
+    }
+}
+
+// NOUVELLE FONCTION : Récupérer les étudiants d'un groupe spécifique
+async function getStudentsByGroupe(groupeId) {
+    try {
+        const query = `
+        SELECT 
+            e.id,
+            e.nom,
+            e.prenoms,
+            e.matricule,
+            e.matricule_iipea,
+            e.code_unique,
+            e.date_naissance,
+            e.lieu_naissance,
+            e.telephone,
+            e.email,
+            e.lieu_residence,
+            e.contact_parent,
+            e.contact_parent_2,
+            e.nationalite,
+            e.sexe,
+            e.photo_url,
+            e.date_inscription,
+            e.statut_scolaire,
+            f.nom as filiere_nom,
+            f.sigle as filiere_sigle,
+            n.libelle as niveau_libelle,
+            a.annee as annee_academique
+        FROM etudiant e
+        LEFT JOIN filiere f ON e.id_filiere = f.id
+        LEFT JOIN niveau n ON e.niveau_id = n.id
+        LEFT JOIN anneeacademique a ON e.annee_academique_id = a.id
+        WHERE e.groupe_id = $1
+        AND e.standing = 'Inscrit'
+        ORDER BY e.nom ASC, e.prenoms ASC, e.matricule ASC
+        `;
+        const result = await db.query(query, [groupeId]);
+        return result.rows;
+    } catch (error) {
+        console.error('❌ Erreur récupération étudiants du groupe:', error);
+        throw error;
+    }
+}
+
+// Fonction pour récupérer les détails d'un groupe
+async function getGroupeDetail(groupeId) {
+    try {
+        const query = `
+        SELECT 
+            g.id,
+            g.nom,
+            g.capacite_max,
+            c.nom as classe_nom,
+            COUNT(e.id) as effectif,
+            CASE 
+                WHEN g.capacite_max > 0 
+                THEN ROUND((COUNT(e.id) * 100.0 / g.capacite_max), 2)
+                ELSE 0 
+            END as taux_remplissage
+        FROM groupe g
+        LEFT JOIN classe c ON g.classe_id = c.id
+        LEFT JOIN etudiant e ON e.groupe_id = g.id
+        WHERE g.id = $1
+        GROUP BY g.id, g.nom, g.capacite_max, c.nom
+        `;
+        const result = await db.query(query, [groupeId]);
+        return result.rows[0] || null;
+    } catch (error) {
+        console.error('❌ Erreur récupération détail groupe:', error);
         throw error;
     }
 }
@@ -273,7 +346,31 @@ router.use('/certificats/html/masse', (req, res, next) => {
     }
 });
 
-// === ROUTE POUR AFFICHAGE HTML EN MASSE ===
+router.use('/certificats/html/masse/groupe', (req, res, next) => {
+    try {
+        // Vérifier le token depuis le body (formulaire) ou header
+        const token = req.body.token || req.headers.authorization?.replace('Bearer ', '');
+        
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Token manquant'
+            });
+        }
+        
+        // Ajouter le token aux headers pour les middlewares suivants
+        req.headers.authorization = `Bearer ${token}`;
+        next();
+    } catch (error) {
+        console.error('❌ Erreur middleware token:', error);
+        return res.status(401).json({
+            success: false,
+            message: 'Token invalide'
+        });
+    }
+});
+
+// === ROUTE POUR AFFICHAGE HTML EN MASSE PAR DÉPARTEMENT ===
 router.post('/certificats/html/masse', async (req, res) => {
     let startTime = Date.now();
     
@@ -400,6 +497,149 @@ router.post('/certificats/html/masse', async (req, res) => {
     }
 });
 
+// === NOUVELLE ROUTE : GÉNÉRATION PAR GROUPE ===
+router.post('/certificats/html/masse/groupe', async (req, res) => {
+    let startTime = Date.now();
+    
+    try {
+        const { departement_id, groupe_id, type_certificat = 'scolarite' } = req.body;
+        
+        console.log('🚀 Début génération certificats HTML en masse PAR GROUPE');
+        console.log('📊 Paramètres:', { departement_id, groupe_id, type_certificat });
+
+        // Validation des paramètres
+        if (!departement_id || !groupe_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Les paramètres departement_id et groupe_id sont obligatoires'
+            });
+        }
+
+        // Récupérer les informations du groupe
+        const groupe = await getGroupeDetail(groupe_id);
+        if (!groupe) {
+            return res.status(404).json({
+                success: false,
+                message: 'Groupe non trouvé'
+            });
+        }
+
+        // Récupérer les étudiants du groupe triés par ordre alphabétique
+        const students = await getStudentsByGroupe(groupe_id);
+        console.log(`📋 ${students.length} étudiants trouvés pour le groupe ${groupe.nom}`);
+
+        if (students.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Aucun étudiant trouvé dans ce groupe'
+            });
+        }
+
+        // Afficher l'ordre alphabétique dans les logs
+        console.log('📝 Ordre alphabétique des étudiants du groupe:');
+        students.forEach((student, index) => {
+            console.log(`  ${index + 1}. ${student.nom} ${student.prenoms} (${student.matricule})`);
+        });
+
+        const certificatsData = [];
+        let succesCount = 0;
+        let echecCount = 0;
+        let photosTrouvees = 0;
+        let photosDefaut = 0;
+
+        // Préparer les données pour chaque étudiant avec gestion de la concurrence
+        const promises = students.map(async (student, index) => {
+            try {
+                console.log(`🔄 ${index + 1}/${students.length}: ${student.nom} ${student.prenoms}`);
+                
+                const studentData = await getCertificatData(student.id);
+                if (!studentData) {
+                    console.log(`❌ Données manquantes pour ${student.nom} ${student.prenoms}`);
+                    echecCount++;
+                    return null;
+                }
+
+                // Préparer les données du template
+                const templateData = await prepareTemplateData(studentData, type_certificat);
+                
+                // Compter les types de photos
+                if (templateData.photo_url_complete.includes('default-avatar')) {
+                    photosDefaut++;
+                } else {
+                    photosTrouvees++;
+                }
+                
+                succesCount++;
+                return templateData;
+
+            } catch (error) {
+                console.error(`❌ Erreur étudiant ${student.nom} ${student.prenoms}:`, error.message);
+                echecCount++;
+                return null;
+            }
+        });
+
+        // Attendre que toutes les promesses soient résolues
+        const results = await Promise.allSettled(promises);
+        
+        // Filtrer les résultats valides
+        results.forEach(result => {
+            if (result.status === 'fulfilled' && result.value) {
+                certificatsData.push(result.value);
+            }
+        });
+
+        // Vérifier si des certificats ont été générés
+        if (certificatsData.length === 0) {
+            return res.status(500).json({
+                success: false,
+                message: 'Aucun certificat généré avec succès pour ce groupe'
+            });
+        }
+
+        // Calculer le temps d'exécution
+        const executionTime = Date.now() - startTime;
+
+        console.log('\n🎉 RÉSULTATS DE LA GÉNÉRATION PAR GROUPE:');
+        console.log(`🏫 Groupe: ${groupe.nom}`);
+        console.log(`👥 Effectif: ${groupe.effectif} étudiants`);
+        console.log(`✅ ${succesCount} certificats générés avec succès`);
+        console.log(`❌ ${echecCount} échecs de génération`);
+        console.log(`📸 Photos: ${photosTrouvees} trouvées, ${photosDefaut} par défaut`);
+        console.log(`⏱️ Temps d'exécution: ${executionTime}ms`);
+        console.log(`📊 Taux de réussite: ${((succesCount / students.length) * 100).toFixed(1)}%`);
+
+        // Rendre le template EJS avec tous les certificats
+        res.render('Certificats_multiple', {
+            certificats: certificatsData,
+            type_certificat: type_certificat,
+            groupe: {
+                nom: groupe.nom,
+                classe_nom: groupe.classe_nom,
+                effectif: groupe.effectif,
+                taux_remplissage: groupe.taux_remplissage
+            },
+            stats: {
+                total: students.length,
+                succes: succesCount,
+                echec: echecCount,
+                photos_trouvees: photosTrouvees,
+                photos_defaut: photosDefaut,
+                temps_execution: executionTime
+            }
+        });
+
+    } catch (error) {
+        console.error('💥 Erreur génération HTML masse par groupe:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erreur lors de la génération des certificats du groupe',
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
+});
+
 // Route de vérification de certificat améliorée
 router.get('/verify-certificat', async (req, res) => {
     try {
@@ -474,6 +714,28 @@ router.get('/etudiants/departement/:departement_id', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Erreur lors de la récupération des étudiants'
+        });
+    }
+});
+
+// Nouvelle route pour obtenir les étudiants d'un groupe
+router.get('/etudiants/groupe/:groupe_id', async (req, res) => {
+    try {
+        const { groupe_id } = req.params;
+        
+        const students = await getStudentsByGroupe(groupe_id);
+        
+        res.json({
+            success: true,
+            data: students,
+            count: students.length
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur récupération étudiants du groupe:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erreur lors de la récupération des étudiants du groupe'
         });
     }
 });

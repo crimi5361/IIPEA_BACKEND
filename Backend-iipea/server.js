@@ -8,7 +8,7 @@ const app = express();
 
 // === CONFIGURATION EJS ===
 app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
+app.set('views', path.join(__dirname, 'Views'));
 
 // Configuration CORS
 const corsOptions = {
@@ -74,7 +74,7 @@ const apiRoutes = [
   { path: "/api/donneeespaceetudiant", route: require('./routes/donneeespaceetudiant.routes') },
   { path: "/api/etudiant-payement-espace", route: require('./routes/PaiementEespaceetudiant.routes') },
   { path: "/api/detailaffichageMaquette", route: require('./routes/DetailAffichageMaquette.routes') }, 
-  // { path: "/api/public", route: require('./routes/public.routes') }, // ← COMMENTÉE TEMPORAIREMENT
+  { path: "/api/public", route: require('./routes/public.routes') }, // ← COMMENTÉE TEMPORAIREMENT
   { path: "/api/emploiDuTemps", route: require('./routes/EDT.routes') },
   { path: "/api/Certificat_Scolarite", route: require('./routes/Certificat_scolarite.routes') },
   { path: "/api/certificats-frequentation", route: require('./routes/Certificat_frequentation.routes') },
