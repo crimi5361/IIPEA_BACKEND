@@ -118,6 +118,9 @@ exports.addEtudiant = async (req, res) => {
     });
   }
 
+  console.log('Fichiers reçus:', req.files);
+  console.log('Corps de la requête:', req.body);
+
   // Démarrer une transaction
   const client = await db.connect();
   let photoUrl = null;
@@ -162,11 +165,24 @@ exports.addEtudiant = async (req, res) => {
     }
 
     // Gestion de la photo
+    // Gestion de la photo - CORRECTION ICI (utilisation de diskStorage)
     if (req.files?.photo?.[0]) {
       const photoFile = req.files.photo[0];
+      console.log('Fichier photo détecté (inscription):', {
+        originalname: photoFile.originalname,
+        mimetype: photoFile.mimetype,
+        size: photoFile.size,
+        path: photoFile.path, // Chemin sur le disque
+        filename: photoFile.filename
+      });
+
       const validation = validatePhotoFile(photoFile);
       
       if (!validation.valid) {
+        // Supprimer le fichier si invalide
+        if (photoFile.path && fs.existsSync(photoFile.path)) {
+          fs.unlinkSync(photoFile.path);
+        }
         return res.status(400).json({
           success: false,
           error: validation.error,
@@ -175,20 +191,27 @@ exports.addEtudiant = async (req, res) => {
       }
 
       try {
-        const fileExt = path.extname(photoFile.originalname).toLowerCase();
-        const filename = `photo_${uuidv4()}${fileExt}`;
-        const filepath = path.join(UPLOAD_DIR, filename);
-        
-        await fs.promises.writeFile(filepath, photoFile.buffer);
+        // Avec diskStorage, le fichier est déjà sauvegardé sur le disque
+        // On utilise juste le nom du fichier pour l'URL
+        const filename = path.basename(photoFile.path);
         photoUrl = `/uploads/photos/${filename}`;
+        console.log('Photo sauvegardée (inscription):', photoUrl);
+        
       } catch (error) {
-        console.error('Erreur traitement photo:', error);
+        // Nettoyer le fichier en cas d'erreur
+        if (photoFile.path && fs.existsSync(photoFile.path)) {
+          fs.unlinkSync(photoFile.path);
+        }
+        console.error('Erreur traitement photo (inscription):', error);
         return res.status(500).json({
           success: false,
           error: 'Erreur lors du traitement de la photo',
-          code: 'PHOTO_PROCESSING_ERROR'
+          code: 'PHOTO_PROCESSING_ERROR',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
       }
+    } else {
+      console.log('Aucun fichier photo détecté dans la requête (inscription)');
     }
 
     // Génération des identifiants

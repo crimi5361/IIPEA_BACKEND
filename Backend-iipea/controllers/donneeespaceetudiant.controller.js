@@ -329,6 +329,7 @@ exports.updateStudentProfile = async (req, res) => {
       lieu_naissance,
       sexe,
       serie_bac,
+      annee_bac, // NOUVEAU CHAMP AJOUTÉ
       lieu_residence,
       pays_naissance
     } = req.body;
@@ -404,6 +405,13 @@ exports.updateStudentProfile = async (req, res) => {
       paramCount++;
     }
 
+    // NOUVEAU CHAMP - annee_bac
+    if (annee_bac !== undefined) {
+      updateFields.push(`annee_bac = $${paramCount}`);
+      values.push(annee_bac);
+      paramCount++;
+    }
+
     if (lieu_residence !== undefined) {
       updateFields.push(`lieu_residence = $${paramCount}`);
       values.push(lieu_residence);
@@ -448,6 +456,7 @@ exports.updateStudentProfile = async (req, res) => {
       'lieu_naissance',
       'sexe',
       'serie_bac',
+      'annee_bac', // AJOUTÉ ICI
       'lieu_residence',
       'pays_naissance'
     ];
@@ -461,7 +470,7 @@ exports.updateStudentProfile = async (req, res) => {
       success: true,
       message: 'Profil mis à jour avec succès',
       data: updatedStudent,
-      is_profile_complete: allFieldsComplete // On calcule cette valeur sans la stocker en base
+      is_profile_complete: allFieldsComplete
     });
 
   } catch (error) {
@@ -476,24 +485,46 @@ exports.updateStudentProfile = async (req, res) => {
 
 // Mise à jour de la photo de profil
 exports.updateStudentPhoto = async (req, res) => {
+  console.log('=== DÉBUT MISE À JOUR PHOTO ===');
+  
   try {
     const studentId = req.params.id;
 
+    console.log('Student ID:', studentId);
+    console.log('Fichier reçu:', req.file ? {
+      originalname: req.file.originalname,
+      filename: req.file.filename,
+      path: req.file.path,
+      size: req.file.size,
+      mimetype: req.file.mimetype
+    } : 'AUCUN FICHIER');
+
     if (!req.file) {
+      console.log('❌ Aucun fichier reçu dans req.file');
       return res.status(400).json({ 
         success: false,
         message: 'Aucun fichier photo fourni' 
       });
     }
 
-    console.log('Fichier reçu:', req.file);
-
     // Validation de la photo
     const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
     const allowedExtensions = ['.jpg', '.jpeg', '.png'];
     const fileExt = path.extname(req.file.originalname).toLowerCase();
 
+    console.log('📁 Validation fichier:', {
+      originalname: req.file.originalname,
+      size: req.file.size,
+      extension: fileExt,
+      maxSize: MAX_FILE_SIZE
+    });
+
     if (!allowedExtensions.includes(fileExt)) {
+      console.log('❌ Format invalide:', fileExt);
+      // Supprimer le fichier invalide
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
       return res.status(400).json({ 
         success: false,
         message: 'Format de photo invalide. Formats acceptés: JPG, JPEG, PNG' 
@@ -501,6 +532,11 @@ exports.updateStudentPhoto = async (req, res) => {
     }
 
     if (req.file.size > MAX_FILE_SIZE) {
+      console.log('❌ Taille excessive:', req.file.size);
+      // Supprimer le fichier trop gros
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
       return res.status(400).json({ 
         success: false,
         message: 'La photo ne doit pas dépasser 2MB' 
@@ -508,12 +544,18 @@ exports.updateStudentPhoto = async (req, res) => {
     }
 
     // Vérifier que l'étudiant existe
+    console.log('🔍 Vérification étudiant en base...');
     const studentCheck = await db.query(
-      'SELECT id, photo_url FROM etudiant WHERE id = $1', 
+      'SELECT id, nom, prenoms, photo_url FROM etudiant WHERE id = $1', 
       [studentId]
     );
     
     if (studentCheck.rows.length === 0) {
+      console.log('❌ Étudiant non trouvé:', studentId);
+      // Supprimer le fichier uploadé
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
       return res.status(404).json({ 
         success: false,
         message: 'Étudiant non trouvé' 
@@ -521,78 +563,83 @@ exports.updateStudentPhoto = async (req, res) => {
     }
 
     const student = studentCheck.rows[0];
-
-    // Vérifier le nombre de modifications de photo (on va utiliser un compteur simulé)
-    // Pour l'instant, on va limiter à 3 modifications sans stocker en base
-    // Vous pourrez ajouter une colonne photo_update_count plus tard si nécessaire
-    const MAX_PHOTO_UPDATES = 3;
-    
-    // Pour l'instant, on va simplement vérifier si la photo a déjà été changée
-    // En production, vous devriez ajouter une colonne photo_update_count
-    const hasExistingPhoto = student.photo_url !== null && student.photo_url !== '';
+    console.log('✅ Étudiant trouvé:', { id: student.id, nom: student.nom, prenoms: student.prenoms });
 
     // Supprimer l'ancienne photo si elle existe
     const oldPhotoUrl = student.photo_url;
     if (oldPhotoUrl && oldPhotoUrl.startsWith('/uploads/photos/')) {
       const oldPhotoPath = path.join(__dirname, '..', oldPhotoUrl);
+      console.log('🗑️ Ancienne photo à supprimer:', oldPhotoPath);
+      
       if (fs.existsSync(oldPhotoPath)) {
         fs.unlinkSync(oldPhotoPath);
-        console.log('Ancienne photo supprimée:', oldPhotoPath);
+        console.log('✅ Ancienne photo supprimée');
+      } else {
+        console.log('ℹ️ Ancienne photo non trouvée sur le disque');
       }
+    } else {
+      console.log('ℹ️ Aucune ancienne photo à supprimer');
     }
 
-    // Générer le nouveau chemin de la photo
-    const photoFileName = req.file.filename;
+    // Construire l'URL de la nouvelle photo
+    const photoFileName = path.basename(req.file.path);
     const photoUrl = `/uploads/photos/${photoFileName}`;
+    console.log('🖼️ Nouvelle photo URL:', photoUrl);
 
     // Mettre à jour la base de données
+    console.log('💾 Mise à jour base de données...');
     const updateQuery = `
       UPDATE etudiant 
-      SET photo_url = $1
+      SET photo_url = $1, updated_at = NOW()
       WHERE id = $2
-      RETURNING id, photo_url
+      RETURNING id, nom, prenoms, photo_url
     `;
 
     const result = await db.query(updateQuery, [photoUrl, studentId]);
     const updatedStudent = result.rows[0];
 
-    console.log('Photo mise à jour avec succès:', updatedStudent);
-
-    // Pour l'instant, on retourne un compteur simulé
-    // En production, vous devriez gérer cela avec une vraie colonne
-    const photoUpdateCount = hasExistingPhoto ? 1 : 0; // Simulation
+    console.log('✅ Photo mise à jour avec succès:', {
+      id: updatedStudent.id,
+      nom: updatedStudent.nom,
+      prenoms: updatedStudent.prenoms,
+      photo_url: updatedStudent.photo_url
+    });
 
     res.status(200).json({
       success: true,
       message: 'Photo de profil mise à jour avec succès',
       data: {
+        id: updatedStudent.id,
+        nom: updatedStudent.nom,
+        prenoms: updatedStudent.prenoms,
         photo_url: updatedStudent.photo_url,
-        photo_update_count: photoUpdateCount,
-        full_url: `${req.protocol}://${req.get('host')}${updatedStudent.photo_url}`,
-        modifications_restantes: Math.max(0, MAX_PHOTO_UPDATES - photoUpdateCount)
+        full_url: `${req.protocol}://${req.get('host')}${updatedStudent.photo_url}`
       }
     });
 
   } catch (error) {
-    console.error('Erreur lors de la mise à jour de la photo:', error);
+    console.error('❌ Erreur lors de la mise à jour de la photo:', error);
     
     // Supprimer le fichier uploadé en cas d'erreur
-    if (req.file) {
-      const filePath = path.join(__dirname, '../uploads/photos', req.file.filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    if (req.file && req.file.path) {
+      console.log('🧹 Nettoyage fichier en erreur:', req.file.path);
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+        console.log('✅ Fichier nettoyé');
       }
     }
 
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur lors de la mise à jour de la photo',
-      error: error.message 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  } finally {
+    console.log('=== FIN MISE À JOUR PHOTO ===\n');
   }
 };
 
-// Récupération du profil étudiant=====================================================
+// Récupération du profil étudiant
 exports.getinfoProfile = async (req, res) => {
   try {
     const studentId = req.params.id;
@@ -646,6 +693,7 @@ exports.getinfoProfile = async (req, res) => {
       'lieu_naissance',
       'sexe',
       'serie_bac',
+      'annee_bac', // AJOUTÉ ICI
       'lieu_residence',
       'pays_naissance'
     ];
