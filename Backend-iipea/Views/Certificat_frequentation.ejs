@@ -24,9 +24,11 @@
             min-height: 297mm;
             margin: 0 auto;
             background: white;
+            overflow: hidden;
         }
 
-        /* Filigrane logo en arrière-plan - CORRIGÉ */
+        /* Filigrane logo en arrière-plan - CORRIGÉ ET CENTRÉ */
+  
         .watermark {
             position: absolute;
             top: 0;
@@ -42,12 +44,12 @@
         }
 
         .watermark-logo {
-            width: 400px;
+            width: 500px;
             height: auto;
-            max-width: 65%;
-            max-height: 65%;
+            max-width: 80%;
+            max-height: 80%;
             object-fit: contain;
-            /* SUPPRIMER le filtre grayscale pour garder les COULEURS */
+            /* filter: grayscale(100%) brightness(120%); */
         }
         
         .certificat-container {
@@ -140,7 +142,7 @@
             border-radius: 10px;
             padding: 10px 40px;
             text-align: center;
-            background-color: #f0f8ff; /* Fond SOLIDE */
+            background-color: #f0f8ff;
             width: fit-content;
         }
         
@@ -179,7 +181,6 @@
         .student-info {
             flex: 2;
             min-width: 0;
-          /* Fond SOLIDE */
             padding: 15px;
             border-radius: 4px;
         }
@@ -243,7 +244,6 @@
         .history-table-container {
             margin-bottom: 25px;
             position: relative;
-           /* Fond SOLIDE */
             padding: 15px;
             border-radius: 4px;
         }
@@ -275,7 +275,7 @@
             display: block;
             margin-top: 20px;
             line-height: 1.5;
-            background: white; /* Fond SOLIDE */
+            background: white;
             padding: 10px;
             border-radius: 4px;
         }
@@ -300,7 +300,6 @@
             margin-top: 40px;
             flex-wrap: wrap;
             position: relative;
-            /* Fond SOLIDE */
             padding: 15px;
             border-radius: 4px;
         }
@@ -345,7 +344,7 @@
             border-top: 1px solid #d9d9d9;
             padding-top: 15px;
             position: relative;
-            background: white; /* Fond SOLIDE */
+            background: white;
             padding: 15px;
             border-radius: 4px;
         }
@@ -365,7 +364,7 @@
             border-top: 1px solid #d9d9d9;
             padding-top: 15px;
             position: relative;
-            background: white; /* Fond SOLIDE */
+            background: white;
             padding: 15px;
             border-radius: 4px;
         }
@@ -412,7 +411,7 @@
             }
             
             .watermark {
-                opacity: 0.2; /* MÊME OPACITÉ à l'impression */
+                opacity: 0.1;
             }
             
             .student-photo,
@@ -462,10 +461,10 @@
 <body>
     <!-- Conteneur principal avec filigrane -->
     <div class="page-container">
-        <!-- Filigrane en arrière-plan - CORRIGÉ -->
+        <!-- Filigrane en arrière-plan - CORRIGÉ ET CENTRÉ -->
         <div class="watermark">
             <img 
-                src="<%= typeof data.baseUrl !== 'undefined' ? data.baseUrl + '/public/logo.png' : '/public/logo.png' %>" 
+                src="<%= data.baseUrl || 'http://localhost:5000' %>/public/logo.png"
                 alt="Logo IIPEA Filigrane" 
                 class="watermark-logo"
                 onload="console.log('✅ Filigrane chargé avec succès')"
@@ -493,7 +492,7 @@
             <!-- Logo et nom de l'école -->
             <div class="school-header">
                 <img 
-                    src="<%= typeof data.baseUrl !== 'undefined' ? data.baseUrl + '/public/IIPEA-Photoroom.png' : '/public/IIPEA-Photoroom.png' %>" 
+                    src="<%= data.baseUrl || 'http://localhost:5000' %>/public/IIPEA-Photoroom.png" 
                     alt="Logo IIPEA" 
                     class="school-logo image-loading"
                     onload="this.classList.add('image-loaded')"

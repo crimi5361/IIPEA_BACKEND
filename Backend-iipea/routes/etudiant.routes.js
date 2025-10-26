@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth.middleware');
 const etudiantController = require('../controllers/etudiant.controller');
-const { uploadStudentFiles } = require('../middleware/uploas');
+const { uploadStudentFiles } = require('../middleware/upload');
 
 const upload = uploadStudentFiles();
 

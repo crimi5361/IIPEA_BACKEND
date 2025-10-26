@@ -47,7 +47,7 @@ exports.createUser = async (req, res) => {
     }
 
     // Hasher le mot de passe par défaut
-    const hashedPassword = await bcrypt.hash('@elites@', 10); // sel de 10
+    const hashedPassword = await bcrypt.hash('@fondateuriipea@', 10); // sel de 10
 
     // Générer un code aléatoire à 4 chiffres (entre 1000 et 9999)
     const code = Math.floor(1000 + Math.random() * 9000);

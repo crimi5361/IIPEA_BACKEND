@@ -26,11 +26,7 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // === SERVIR LES FICHIERS STATIQUES EN PREMIER ===
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/public', express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, path) => {
-    console.log('📁 Fichier statique servi:', path);
-  }
-}));
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // Middleware de logging
 app.use((req, res, next) => {
@@ -90,11 +86,13 @@ apiRoutes.forEach(route => {
 console.log('🎉 Routes API chargées avec succès!');
 
 // Routes de base
-app.get('/test-ejs', (req, res) => {
-  res.render('test', { 
-    title: 'Test EJS',
-    message: 'EJS est correctement configuré!'
-  });
+// Dans app.js, ajoutez cette route
+app.get('/test-images', (req, res) => {
+    res.json({
+        logo: `${process.env.API_URL || 'http://localhost:5000'}/public/logo.png`,
+        photoroom: `${process.env.API_URL || 'http://localhost:5000'}/public/IIPEA-Photoroom.png`,
+        baseUrl: process.env.API_URL || 'http://localhost:5000'
+    });
 });
 
 app.get('/health', (req, res) => {
@@ -113,5 +111,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server ready at http://localhost:${PORT}`);
-  console.log(`📁 Dossier public: ${path.join(__dirname, 'public')}`);
+  console.log(`✅ Serveur démarré sur le port ${PORT}`);
 });

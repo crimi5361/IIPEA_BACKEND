@@ -1,5 +1,6 @@
-// controllers/etudiantController.js
 const db = require('../config/db.config');
+const path = require('path');
+const fs = require('fs');
 
 exports.getStudentProfile = async (req, res) => {
   try {
@@ -65,6 +66,7 @@ exports.getStudentProfile = async (req, res) => {
         lieu_naissance: studentData.lieu_naissance,
         telephone: studentData.telephone,
         email: studentData.email,
+        etablissement_origine: studentData.etablissement_origine,
         lieu_residence: studentData.lieu_residence,
         contact_parent: studentData.contact_parent,
         contact_parent_2: studentData.contact_parent_2,
@@ -135,6 +137,564 @@ exports.getStudentProfile = async (req, res) => {
     console.error('Erreur lors de la récupération du profil étudiant:', error);
     res.status(500).json({ 
       message: 'Erreur serveur lors de la récupération des données',
+      error: error.message 
+    });
+  }
+};
+// Mise à jour du profil étudiant
+exports.updateStudentProfile = async (req, res) => {
+  try {
+    const studentId = req.params.id;
+    const {
+      etablissement_origine,
+      date_naissance,
+      matricule_mers, // Correspond au champ matricule
+      numero_table_bac, // Correspond au champ numero_table
+      matricule_menet, // Correspond au champ ip_ministere
+      lieu_naissance,
+      sexe,
+      serie_bac,
+      lieu_residence,
+      pays_naissance
+    } = req.body;
+
+    console.log('Données reçues pour mise à jour:', req.body);
+
+    // Vérifier que l'étudiant existe
+    const studentCheck = await db.query(
+      'SELECT id, is_profile_complete FROM etudiant WHERE id = $1', 
+      [studentId]
+    );
+    
+    if (studentCheck.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Étudiant non trouvé' 
+      });
+    }
+
+    // Vérifier si le profil est déjà complet et verrouillé
+    const currentStudent = studentCheck.rows[0];
+    if (currentStudent.is_profile_complete) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'Le profil est complet et ne peut plus être modifié. Seule la photo peut être mise à jour (3 modifications maximum).' 
+      });
+    }
+
+    // Construction de la requête de mise à jour
+    const updateFields = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (etablissement_origine !== undefined) {
+      updateFields.push(`etablissement_origine = $${paramCount}`);
+      values.push(etablissement_origine);
+      paramCount++;
+    }
+
+    if (date_naissance !== undefined) {
+      updateFields.push(`date_naissance = $${paramCount}`);
+      values.push(date_naissance);
+      paramCount++;
+    }
+
+    // matricule_mers → champ matricule
+    if (matricule_mers !== undefined) {
+      updateFields.push(`matricule = $${paramCount}`);
+      values.push(matricule_mers);
+      paramCount++;
+    }
+
+    // numero_table_bac → champ numero_table
+    if (numero_table_bac !== undefined) {
+      updateFields.push(`numero_table = $${paramCount}`);
+      values.push(numero_table_bac);
+      paramCount++;
+    }
+
+    // matricule_menet → champ ip_ministere
+    if (matricule_menet !== undefined) {
+      updateFields.push(`ip_ministere = $${paramCount}`);
+      values.push(matricule_menet);
+      paramCount++;
+    }
+
+    if (lieu_naissance !== undefined) {
+      updateFields.push(`lieu_naissance = $${paramCount}`);
+      values.push(lieu_naissance);
+      paramCount++;
+    }
+
+    if (sexe !== undefined) {
+      updateFields.push(`sexe = $${paramCount}`);
+      values.push(sexe);
+      paramCount++;
+    }
+
+    if (serie_bac !== undefined) {
+      updateFields.push(`serie_bac = $${paramCount}`);
+      values.push(serie_bac);
+      paramCount++;
+    }
+
+    if (lieu_residence !== undefined) {
+      updateFields.push(`lieu_residence = $${paramCount}`);
+      values.push(lieu_residence);
+      paramCount++;
+    }
+
+    if (pays_naissance !== undefined) {
+      updateFields.push(`pays_naissance = $${paramCount}`);
+      values.push(pays_naissance);
+      paramCount++;
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Aucune donnée à mettre à jour' 
+      });
+    }
+
+    // Vérifier si tous les champs requis sont maintenant remplis
+    const requiredFields = [
+      'etablissement_origine',
+      'date_naissance', 
+      'matricule_mers',
+      'numero_table_bac',
+      'matricule_menet',
+      'lieu_naissance',
+      'sexe',
+      'serie_bac',
+      'lieu_residence',
+      'pays_naissance'
+    ];
+
+    const allFieldsComplete = requiredFields.every(field => {
+      const value = req.body[field];
+      return value !== null && value !== undefined && value !== '';
+    });
+
+    // Si tous les champs sont complets, marquer le profil comme complet
+    if (allFieldsComplete) {
+      updateFields.push(`is_profile_complete = true`);
+      console.log('Profil marqué comme complet pour l\'étudiant:', studentId);
+    }
+
+    // Ajouter l'ID de l'étudiant à la fin
+    values.push(studentId);
+
+    const query = `
+      UPDATE etudiant 
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramCount}
+      RETURNING *
+    `;
+
+    const result = await db.query(query, values);
+    const updatedStudent = result.rows[0];
+
+    console.log('Mise à jour réussie:', updatedStudent);
+
+    res.status(200).json({
+      success: true,
+      message: allFieldsComplete 
+        ? 'Profil mis à jour avec succès et verrouillé' 
+        : 'Profil mis à jour avec succès',
+      data: updatedStudent,
+      is_profile_complete: allFieldsComplete
+    });
+
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour du profil étudiant:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur serveur lors de la mise à jour du profil',
+      error: error.message 
+    });
+  }
+};
+
+// Mise à jour du profil étudiant
+exports.updateStudentProfile = async (req, res) => {
+  try {
+    const studentId = req.params.id;
+    const {
+      etablissement_origine,
+      date_naissance,
+      matricule_mers, // Correspond au champ matricule
+      numero_table_bac, // Correspond au champ numero_table
+      matricule_menet, // Correspond au champ ip_ministere
+      lieu_naissance,
+      sexe,
+      serie_bac,
+      lieu_residence,
+      pays_naissance
+    } = req.body;
+
+    console.log('Données reçues pour mise à jour:', req.body);
+
+    // Vérifier que l'étudiant existe
+    const studentCheck = await db.query(
+      'SELECT id FROM etudiant WHERE id = $1', 
+      [studentId]
+    );
+    
+    if (studentCheck.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Étudiant non trouvé' 
+      });
+    }
+
+    // Construction de la requête de mise à jour
+    const updateFields = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (etablissement_origine !== undefined) {
+      updateFields.push(`etablissement_origine = $${paramCount}`);
+      values.push(etablissement_origine);
+      paramCount++;
+    }
+
+    if (date_naissance !== undefined) {
+      updateFields.push(`date_naissance = $${paramCount}`);
+      values.push(date_naissance);
+      paramCount++;
+    }
+
+    // matricule_mers → champ matricule
+    if (matricule_mers !== undefined) {
+      updateFields.push(`matricule = $${paramCount}`);
+      values.push(matricule_mers);
+      paramCount++;
+    }
+
+    // numero_table_bac → champ numero_table
+    if (numero_table_bac !== undefined) {
+      updateFields.push(`numero_table = $${paramCount}`);
+      values.push(numero_table_bac);
+      paramCount++;
+    }
+
+    // matricule_menet → champ ip_ministere
+    if (matricule_menet !== undefined) {
+      updateFields.push(`ip_ministere = $${paramCount}`);
+      values.push(matricule_menet);
+      paramCount++;
+    }
+
+    if (lieu_naissance !== undefined) {
+      updateFields.push(`lieu_naissance = $${paramCount}`);
+      values.push(lieu_naissance);
+      paramCount++;
+    }
+
+    if (sexe !== undefined) {
+      updateFields.push(`sexe = $${paramCount}`);
+      values.push(sexe);
+      paramCount++;
+    }
+
+    if (serie_bac !== undefined) {
+      updateFields.push(`serie_bac = $${paramCount}`);
+      values.push(serie_bac);
+      paramCount++;
+    }
+
+    if (lieu_residence !== undefined) {
+      updateFields.push(`lieu_residence = $${paramCount}`);
+      values.push(lieu_residence);
+      paramCount++;
+    }
+
+    if (pays_naissance !== undefined) {
+      updateFields.push(`pays_naissance = $${paramCount}`);
+      values.push(pays_naissance);
+      paramCount++;
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Aucune donnée à mettre à jour' 
+      });
+    }
+
+    // Ajouter l'ID de l'étudiant à la fin
+    values.push(studentId);
+
+    const query = `
+      UPDATE etudiant 
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramCount}
+      RETURNING *
+    `;
+
+    const result = await db.query(query, values);
+    const updatedStudent = result.rows[0];
+
+    console.log('Mise à jour réussie:', updatedStudent);
+
+    // Vérifier si tous les champs requis sont maintenant remplis
+    const requiredFields = [
+      'etablissement_origine',
+      'date_naissance', 
+      'matricule',
+      'numero_table',
+      'ip_ministere',
+      'lieu_naissance',
+      'sexe',
+      'serie_bac',
+      'lieu_residence',
+      'pays_naissance'
+    ];
+
+    const allFieldsComplete = requiredFields.every(field => {
+      const value = updatedStudent[field];
+      return value !== null && value !== undefined && value !== '';
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Profil mis à jour avec succès',
+      data: updatedStudent,
+      is_profile_complete: allFieldsComplete // On calcule cette valeur sans la stocker en base
+    });
+
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour du profil étudiant:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur serveur lors de la mise à jour du profil',
+      error: error.message 
+    });
+  }
+};
+
+// Mise à jour de la photo de profil
+exports.updateStudentPhoto = async (req, res) => {
+  try {
+    const studentId = req.params.id;
+
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Aucun fichier photo fourni' 
+      });
+    }
+
+    console.log('Fichier reçu:', req.file);
+
+    // Validation de la photo
+    const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+    const allowedExtensions = ['.jpg', '.jpeg', '.png'];
+    const fileExt = path.extname(req.file.originalname).toLowerCase();
+
+    if (!allowedExtensions.includes(fileExt)) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Format de photo invalide. Formats acceptés: JPG, JPEG, PNG' 
+      });
+    }
+
+    if (req.file.size > MAX_FILE_SIZE) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'La photo ne doit pas dépasser 2MB' 
+      });
+    }
+
+    // Vérifier que l'étudiant existe
+    const studentCheck = await db.query(
+      'SELECT id, photo_url FROM etudiant WHERE id = $1', 
+      [studentId]
+    );
+    
+    if (studentCheck.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Étudiant non trouvé' 
+      });
+    }
+
+    const student = studentCheck.rows[0];
+
+    // Vérifier le nombre de modifications de photo (on va utiliser un compteur simulé)
+    // Pour l'instant, on va limiter à 3 modifications sans stocker en base
+    // Vous pourrez ajouter une colonne photo_update_count plus tard si nécessaire
+    const MAX_PHOTO_UPDATES = 3;
+    
+    // Pour l'instant, on va simplement vérifier si la photo a déjà été changée
+    // En production, vous devriez ajouter une colonne photo_update_count
+    const hasExistingPhoto = student.photo_url !== null && student.photo_url !== '';
+
+    // Supprimer l'ancienne photo si elle existe
+    const oldPhotoUrl = student.photo_url;
+    if (oldPhotoUrl && oldPhotoUrl.startsWith('/uploads/photos/')) {
+      const oldPhotoPath = path.join(__dirname, '..', oldPhotoUrl);
+      if (fs.existsSync(oldPhotoPath)) {
+        fs.unlinkSync(oldPhotoPath);
+        console.log('Ancienne photo supprimée:', oldPhotoPath);
+      }
+    }
+
+    // Générer le nouveau chemin de la photo
+    const photoFileName = req.file.filename;
+    const photoUrl = `/uploads/photos/${photoFileName}`;
+
+    // Mettre à jour la base de données
+    const updateQuery = `
+      UPDATE etudiant 
+      SET photo_url = $1
+      WHERE id = $2
+      RETURNING id, photo_url
+    `;
+
+    const result = await db.query(updateQuery, [photoUrl, studentId]);
+    const updatedStudent = result.rows[0];
+
+    console.log('Photo mise à jour avec succès:', updatedStudent);
+
+    // Pour l'instant, on retourne un compteur simulé
+    // En production, vous devriez gérer cela avec une vraie colonne
+    const photoUpdateCount = hasExistingPhoto ? 1 : 0; // Simulation
+
+    res.status(200).json({
+      success: true,
+      message: 'Photo de profil mise à jour avec succès',
+      data: {
+        photo_url: updatedStudent.photo_url,
+        photo_update_count: photoUpdateCount,
+        full_url: `${req.protocol}://${req.get('host')}${updatedStudent.photo_url}`,
+        modifications_restantes: Math.max(0, MAX_PHOTO_UPDATES - photoUpdateCount)
+      }
+    });
+
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour de la photo:', error);
+    
+    // Supprimer le fichier uploadé en cas d'erreur
+    if (req.file) {
+      const filePath = path.join(__dirname, '../uploads/photos', req.file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur serveur lors de la mise à jour de la photo',
+      error: error.message 
+    });
+  }
+};
+
+// Récupération du profil étudiant=====================================================
+exports.getinfoProfile = async (req, res) => {
+  try {
+    const studentId = req.params.id;
+
+    const query = `
+      SELECT 
+        id,
+        matricule,
+        nom,
+        prenoms,
+        date_naissance,
+        lieu_naissance,
+        telephone,
+        email,
+        etablissement_origine,
+        lieu_residence,
+        contact_parent,
+        contact_parent_2,
+        contact_etudiant,
+        sexe,
+        nationalite,
+        pays_naissance,
+        photo_url,
+        numero_table,
+        ip_ministere,
+        serie_bac,
+        annee_bac,
+        code_unique
+      FROM etudiant 
+      WHERE id = $1
+    `;
+
+    const result = await db.query(query, [studentId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Étudiant non trouvé' 
+      });
+    }
+
+    const student = result.rows[0];
+
+    // Vérifier si le profil est complet
+    const requiredFields = [
+      'etablissement_origine',
+      'date_naissance', 
+      'matricule',
+      'numero_table',
+      'ip_ministere',
+      'lieu_naissance',
+      'sexe',
+      'serie_bac',
+      'lieu_residence',
+      'pays_naissance'
+    ];
+
+    const isProfileComplete = requiredFields.every(field => {
+      const value = student[field];
+      return value !== null && value !== undefined && value !== '';
+    });
+
+    // Structurer la réponse selon le format attendu par le frontend
+    const responseData = {
+      informations_personnelles: {
+        id: student.id,
+        matricule: student.matricule,
+        nom: student.nom,
+        prenoms: student.prenoms,
+        date_naissance: student.date_naissance,
+        lieu_naissance: student.lieu_naissance,
+        telephone: student.telephone,
+        email: student.email,
+        etablissement_origine: student.etablissement_origine,
+        lieu_residence: student.lieu_residence,
+        contact_parent: student.contact_parent,
+        contact_parent_2: student.contact_parent_2,
+        contact_etudiant: student.contact_etudiant,
+        sexe: student.sexe,
+        nationalite: student.nationalite,
+        pays_naissance: student.pays_naissance,
+        photo_url: student.photo_url,
+        numero_table: student.numero_table,
+        ip_ministere: student.ip_ministere,
+        serie_bac: student.serie_bac,
+        annee_bac: student.annee_bac,
+        code_unique: student.code_unique,
+        is_profile_complete: isProfileComplete
+      },
+      informations_familiales: {
+        nom_parent_1: student.nom_parent_1 || null,
+        nom_parent_2: student.nom_parent_2 || null
+      }
+    };
+
+    res.status(200).json(responseData);
+
+  } catch (error) {
+    console.error('Erreur lors de la récupération du profil étudiant:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur serveur lors de la récupération du profil',
       error: error.message 
     });
   }

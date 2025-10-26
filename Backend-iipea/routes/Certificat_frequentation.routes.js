@@ -334,8 +334,10 @@ function getCompletePhotoUrl(originalPhotoUrl) {
         return originalPhotoUrl;
     } else if (originalPhotoUrl && checkPhotoExists(originalPhotoUrl)) {
         const cleanPath = originalPhotoUrl.startsWith('/') ? originalPhotoUrl : `/${originalPhotoUrl}`;
+        // Utiliser le chemin relatif correct
         return `${process.env.API_URL || 'http://localhost:5000'}${cleanPath}`;
     } else {
+        // Chemin corrigé pour l'image par défaut
         return `${process.env.API_URL || 'http://localhost:5000'}/public/default-avatar.png`;
     }
 }

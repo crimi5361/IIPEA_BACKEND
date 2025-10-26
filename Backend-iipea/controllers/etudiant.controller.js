@@ -403,6 +403,8 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.pays_naissance, 
         e.telephone,
         e.email,
+        e.date_naissance,
+        e.lieu_naissance,
         e.lieu_residence,
         e.contact_parent,
         e.nom_parent_1, 
@@ -413,16 +415,13 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.ip_ministere,
         e.statut_scolaire,
         e.etablissement_origine,
-        e.inscrit_par,
         e.date_inscription,
         e.nationalite,
         e.standing,
-        e.numero_table,
         e.sexe,
         e.contact_etudiant,
         e.contact_parent_2,
         e.matricule_iipea,
-        e.photo_url,
         f.nom as filiere,
         f.sigle as filiere_sigle,
         n.libelle as niveau,
@@ -432,6 +431,8 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         doc.justificatif_identite,
         doc.dernier_diplome,
         doc.fiche_orientation,
+        -- Informations de groupe
+        g.nom as groupe_nom,
         -- Informations de scolarité
         s.montant_scolarite,
         s.scolarite_verse,
@@ -452,6 +453,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       JOIN departement d ON e.departement_id = d.id
       LEFT JOIN document doc ON e.document_id = doc.id
       LEFT JOIN scolarite s ON e.scolarite_id = s.id
+      LEFT JOIN groupe g ON e.groupe_id = g.id  -- Jointure avec la table groupe
       ${whereClause}
       ORDER BY e.nom ASC, e.prenoms ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
@@ -463,6 +465,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
       LEFT JOIN scolarite s ON e.scolarite_id = s.id
+      LEFT JOIN groupe g ON e.groupe_id = g.id  -- Jointure ajoutée aussi dans le count
       ${whereClause}
     `;
 
