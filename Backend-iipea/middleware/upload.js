@@ -21,7 +21,7 @@ const uploadStudentFiles = () => {
   return multer({
     storage: photoStorage,
     limits: {
-      fileSize: 2 * 1024 * 1024 // 2MB
+      fileSize: 8 * 1024 * 1024 // 8MB
     },
     fileFilter: (req, file, cb) => {
       const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png'];

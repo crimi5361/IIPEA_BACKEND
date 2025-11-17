@@ -388,7 +388,7 @@
         <!-- Logo et nom de l'école -->
         <div class="school-header">
             <img 
-                src="<%= data.baseUrl %>/public/IIPEA-Photoroom.png" 
+                src="<%= data.baseUrl || 'http://localhost:5000' %>/public/IIPEA-Photoroom.png" 
                 alt="Logo IIPEA" 
                 class="school-logo image-loading"
                 onload="this.classList.add('image-loaded')"

@@ -328,7 +328,7 @@ function checkPhotoExists(photoUrl) {
         return false;
     }
 }
-
+// Focnction pour obtenir l'URL complète de la photo 
 function getCompletePhotoUrl(originalPhotoUrl) {
     if (originalPhotoUrl && originalPhotoUrl.startsWith('http')) {
         return originalPhotoUrl;
