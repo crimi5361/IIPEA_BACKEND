@@ -242,19 +242,15 @@ function checkPhotoExists(photoUrl) {
 
 // Fonction pour obtenir l'URL complète de la photo
 function getCompletePhotoUrl(originalPhotoUrl) {
-    // Vérifier si l'URL contient déjà le domaine complet
     if (originalPhotoUrl && originalPhotoUrl.startsWith('http')) {
         return originalPhotoUrl;
-    } 
-    // Vérifier si c'est un chemin relatif et que le fichier existe
-    else if (originalPhotoUrl && checkPhotoExists(originalPhotoUrl)) {
-        // Construire l'URL correctement
+    } else if (originalPhotoUrl && checkPhotoExists(originalPhotoUrl)) {
         const cleanPath = originalPhotoUrl.startsWith('/') ? originalPhotoUrl : `/${originalPhotoUrl}`;
-        return `${process.env.API_URL || 'http://localhost:5000'}${cleanPath}`;
-    } 
-    // Photo par défaut
-    else {
-        return `${process.env.API_URL || 'http://localhost:5000'}/public/default-avatar.png`;
+        // UTILISER LE CHEMIN RELATIF pour la production
+        return cleanPath;
+    } else {
+        // Chemin corrigé pour l'image par défaut
+        return '/public/default-avatar.png';
     }
 }
 
@@ -285,15 +281,16 @@ async function prepareTemplateData(studentData, typeCertificat) {
     }
 
     return {
-        ...studentData,
-        date_naissance_formatee: formatDate(studentData.informations_personnelles.date_naissance),
-        date_inscription_formatee: formatDate(studentData.historique.date_inscription),
-        nationalite_formatee: formatNationalite(studentData.informations_personnelles.nationalite),
-        photo_url_complete: photoUrlComplete,
-        date_emission: new Date().toLocaleDateString('fr-FR'),
-        baseUrl: process.env.API_URL || 'http://localhost:5000',
-        qrCodeImage: qrCodeImage
-    };
+    ...studentData,
+    date_naissance_formatee: formatDate(studentData.informations_personnelles.date_naissance),
+    date_inscription_formatee: formatDate(studentData.historique.date_inscription),
+    nationalite_formatee: formatNationalite(studentData.informations_personnelles.nationalite),
+    photo_url_complete: photoUrlComplete,
+    date_emission: new Date().toLocaleDateString('fr-FR'),
+    // SUPPRIMER CETTE LIGNE ↓
+    // baseUrl: process.env.API_URL || 'http://localhost:5000',
+    qrCodeImage: qrCodeImage
+};
 }
 
 function formatDate(dateString) {

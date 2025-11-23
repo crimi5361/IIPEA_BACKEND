@@ -329,16 +329,30 @@ function checkPhotoExists(photoUrl) {
     }
 }
 // Focnction pour obtenir l'URL complète de la photo 
+// function getCompletePhotoUrl(originalPhotoUrl) {
+//     if (originalPhotoUrl && originalPhotoUrl.startsWith('http')) {
+//         return originalPhotoUrl;
+//     } else if (originalPhotoUrl && checkPhotoExists(originalPhotoUrl)) {
+//         const cleanPath = originalPhotoUrl.startsWith('/') ? originalPhotoUrl : `/${originalPhotoUrl}`;
+//         // Utiliser le chemin relatif correct
+//         return `${process.env.API_URL || 'http://localhost:5000'}${cleanPath}`;
+//     } else {
+//         // Chemin corrigé pour l'image par défaut
+//         return `${process.env.API_URL || 'http://localhost:5000'}/public/default-avatar.png`;
+//     }
+// }
+
+//Fobction pour obtenir l'URL complète de la photo(correction)
 function getCompletePhotoUrl(originalPhotoUrl) {
     if (originalPhotoUrl && originalPhotoUrl.startsWith('http')) {
         return originalPhotoUrl;
     } else if (originalPhotoUrl && checkPhotoExists(originalPhotoUrl)) {
         const cleanPath = originalPhotoUrl.startsWith('/') ? originalPhotoUrl : `/${originalPhotoUrl}`;
-        // Utiliser le chemin relatif correct
-        return `${process.env.API_URL || 'http://localhost:5000'}${cleanPath}`;
+        // Utiliser le chemin relatif correct pour la production
+        return cleanPath;
     } else {
         // Chemin corrigé pour l'image par défaut
-        return `${process.env.API_URL || 'http://localhost:5000'}/public/default-avatar.png`;
+        return '/public/default-avatar.png';
     }
 }
 
@@ -392,19 +406,20 @@ async function prepareTemplateDataFrequentation(studentData) {
     }
 
     return {
-        ...studentData,
-        date_naissance_formatee: formatDate(studentData.informations_personnelles.date_naissance),
-        date_inscription_formatee: formatDate(studentData.historique.date_inscription),
-        nationalite_formatee: formatNationalite(studentData.informations_personnelles.nationalite),
-        photo_url_complete: photoUrlComplete,
-        date_emission: new Date().toLocaleDateString('fr-FR'),
-        baseUrl: process.env.API_URL || 'http://localhost:5000',
-        qrCodeImage: qrCodeImage,
-        historique_annees_formate: studentData.historique_annees.map(annee => ({
-            ...annee,
-            date_inscription_formatee: formatDate(annee.date_inscription)
-        }))
-    };
+    ...studentData,
+    date_naissance_formatee: formatDate(studentData.informations_personnelles.date_naissance),
+    date_inscription_formatee: formatDate(studentData.historique.date_inscription),
+    nationalite_formatee: formatNationalite(studentData.informations_personnelles.nationalite),
+    photo_url_complete: photoUrlComplete,
+    date_emission: new Date().toLocaleDateString('fr-FR'),
+    // SUPPRIME cette ligne ↓
+    // baseUrl: process.env.API_URL || 'http://localhost:5000',
+    qrCodeImage: qrCodeImage,
+    historique_annees_formate: studentData.historique_annees.map(annee => ({
+        ...annee,
+        date_inscription_formatee: formatDate(annee.date_inscription)
+    }))
+};
 }
 
 // === MIDDLEWARE POUR TRAITER LE TOKEN ===

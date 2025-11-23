@@ -426,8 +426,6 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.pays_naissance, 
         e.telephone,
         e.email,
-        e.date_naissance,
-        e.lieu_naissance,
         e.lieu_residence,
         e.contact_parent,
         e.nom_parent_1, 
@@ -445,11 +443,19 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         e.contact_etudiant,
         e.contact_parent_2,
         e.matricule_iipea,
+
         f.nom as filiere,
         f.sigle as filiere_sigle,
+
         n.libelle as niveau,
+
         a.annee as annee_academique,
+
         d.nom as departement,
+
+        c.id as curcus_id,
+        c.type_parcours,
+
         doc.extrait_naissance,
         doc.justificatif_identite,
         doc.dernier_diplome,
@@ -476,7 +482,8 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       JOIN departement d ON e.departement_id = d.id
       LEFT JOIN document doc ON e.document_id = doc.id
       LEFT JOIN scolarite s ON e.scolarite_id = s.id
-      LEFT JOIN groupe g ON e.groupe_id = g.id  -- Jointure avec la table groupe
+      LEFT JOIN groupe g ON e.groupe_id = g.id 
+      LEFT JOIN curcus c ON e.curcus_id = c.id
       ${whereClause}
       ORDER BY e.nom ASC, e.prenoms ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
