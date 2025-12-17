@@ -412,7 +412,6 @@ async function prepareTemplateDataFrequentation(studentData) {
     nationalite_formatee: formatNationalite(studentData.informations_personnelles.nationalite),
     photo_url_complete: photoUrlComplete,
     date_emission: new Date().toLocaleDateString('fr-FR'),
-    // SUPPRIME cette ligne ↓
     // baseUrl: process.env.API_URL || 'http://localhost:5000',
     qrCodeImage: qrCodeImage,
     historique_annees_formate: studentData.historique_annees.map(annee => ({

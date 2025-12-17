@@ -12,6 +12,9 @@ router.get('/classe/:id', authenticateToken, classesController.getDetailClasse);
 // Pour la page DetailGroupe  
 router.get('/groupe/:id', authenticateToken, classesController.getDetailGroupe);
 
+//pour les infor basique d'un groupe
+router.get('/groupe/:id/info', classesController.getGroupeSimpleInfo);
+
 // Pour les années académiques (commun)
 router.get('/annees-academiques', authenticateToken, classesController.getAnneesAcademiques);
 

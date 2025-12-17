@@ -143,6 +143,38 @@ exports.getDetailClasse = async (req, res) => {
     client.release();
   }
 };
+// Route pour recuperer uniquement les information sur le groupe a partir de l'id ,
+
+exports.getGroupeSimpleInfo = async (req, res) => {
+  const client = await db.connect();
+
+  try {
+    const { id } = req.params;
+
+    const query = `
+      SELECT 
+        g.id,
+        g.nom
+      FROM groupe g
+      WHERE g.id = $1
+    `;
+    
+    const result = await client.query(query, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Groupe non trouvé' });
+    }
+    
+    res.status(200).json(result.rows[0]);
+    
+  } catch (error) {
+    console.error('Erreur:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  } finally {
+    client.release(); // Important : libérer la connexion
+  }
+};
+
 
 // Route pour DetailGroupe (détails d'un groupe spécifique)
 exports.getDetailGroupe = async (req, res) => {
