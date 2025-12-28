@@ -1,10 +1,18 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const bodyParser = require('body-parser');
 const path = require('path');
 
 const app = express();
+
+// Middleware pour parser JSON SEULEMENT pour les requêtes non-multipart
+app.use((req, res, next) => {
+  if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
+    express.json({ limit: '50mb' })(req, res, next);
+  } else {
+    next();
+  }
+});
 
 // === CONFIGURATION EJS ===
 app.set('view engine', 'ejs');
@@ -15,24 +23,37 @@ const corsOptions = {
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Authorization', 'Content-Disposition']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Authorization', 'Content-Disposition', 'Content-Length']
 };
 
-// Middlewares
+// Middleware CORS en premier
 app.use(cors(corsOptions));
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // === SERVIR LES FICHIERS STATIQUES EN PREMIER ===
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
-// Middleware de logging
+// Middleware pour détecter FormData et éviter body-parser
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
-  next();
+  console.log(`\n${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+  console.log(' Content-Type:', req.headers['content-type']);
+  
+  // Si c'est FormData, on désactive le parsing automatique
+  const contentType = req.headers['content-type'];
+  if (contentType && contentType.includes('multipart/form-data')) {
+    console.log('🛡️ FormData détecté - désactivation body parsing');
+    // On ne parse pas le body ici, multer s'en chargera
+    next();
+  } else {
+    // Pour les autres requêtes, on parse JSON
+    express.json({ limit: '50mb' })(req, res, next);
+  }
 });
+
+// Middleware pour URL encoded (uniquement pour non-FormData)
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
 
 // === CHARGEMENT DES ROUTES API ===
 console.log('🔍 Chargement des routes...');
@@ -74,6 +95,7 @@ const apiRoutes = [
   { path: "/api/emploiDuTemps", route: require('./routes/EDT.routes') },
   { path: "/api/Certificat_Scolarite", route: require('./routes/Certificat_scolarite.routes') },
   { path: "/api/certificats-frequentation", route: require('./routes/Certificat_frequentation.routes') },
+  { path: "/api/notes", route: require('./routes/notes.routes') },
 
 ];
 
@@ -84,6 +106,23 @@ apiRoutes.forEach(route => {
 });
 
 console.log('🎉 Routes API chargées avec succès!');
+
+// Avant les autres routes, ajouter ce test endpoint
+app.post('/api/test-formdata', (req, res) => {
+  console.log('🧪 Test FormData endpoint appelé');
+  console.log('📋 Content-Type:', req.headers['content-type']);
+  console.log('📦 Raw body (premier 1000 chars):', 
+    req.rawBody ? req.rawBody.substring(0, 1000) : 'Pas de raw body'
+  );
+  
+  res.json({
+    success: true,
+    message: 'Test endpoint fonctionne',
+    contentType: req.headers['content-type'],
+    bodyKeys: Object.keys(req.body),
+    hasFile: !!req.file
+  });
+});
 
 // Routes de base
 // Dans app.js, ajoutez cette route

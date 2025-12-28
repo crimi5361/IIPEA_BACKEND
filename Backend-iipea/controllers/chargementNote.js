@@ -1,0 +1,1167 @@
+const multer = require('multer');
+const xlsx = require('xlsx');
+const path = require('path');
+const fs = require('fs');
+const db = require('../config/db.config');
+
+// ================= MIDDLEWARE POUR BYPASS BODY-PARSER POUR FORMDATA =================
+const disableBodyParserForFormData = (req, res, next) => {
+  console.log('🛡️ Middleware disableBodyParserForFormData appelé');
+  const contentType = req.headers['content-type'];
+  console.log('📋 Content-Type détecté:', contentType);
+  
+  const hasContentLength = req.headers['content-length'] && parseInt(req.headers['content-length']) > 0;
+  
+  if (contentType && contentType.includes('multipart/form-data')) {
+    console.log('🔄 Désactivation des parsers pour FormData');
+    req.body = {};
+    req._body = false;
+  } else if (req.method === 'POST' && hasContentLength && !contentType) {
+    console.log('⚠️ Requête POST sans Content-Type détectée, traitement comme FormData');
+    req.body = {};
+    req._body = false;
+  }
+  
+  next();
+};
+
+// ================= CONFIGURATION MULTER =================
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      console.log('📁 Multer destination appelée');
+      const { groupeId, matiereId } = req.body;
+      
+      if (!groupeId || !matiereId) {
+        console.error('❌ Erreur: groupeId et matiereId sont requis');
+        return cb(new Error('groupeId et matiereId sont requis'));
+      }
+      
+      const basePath = path.join(__dirname, '../../uploads/notes');
+      const currentYear = new Date().getFullYear();
+      const nextYear = currentYear + 1;
+      const academicYear = `${currentYear}-${nextYear}`;
+      
+      const uploadPath = path.join(basePath, academicYear, `groupe-${groupeId}`);
+      
+      if (!fs.existsSync(uploadPath)) {
+        fs.mkdirSync(uploadPath, { recursive: true });
+      }
+      
+      cb(null, uploadPath);
+    } catch (error) {
+      console.error('❌ Erreur dans multer destination:', error);
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    const originalName = path.parse(file.originalname).name.replace(/[^a-zA-Z0-9]/g, '_');
+    const extension = path.extname(file.originalname);
+    const filename = `${originalName}_${timestamp}${extension}`;
+    cb(null, filename);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['.xlsx', '.xls'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    
+    if (allowedTypes.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Seuls les fichiers Excel (.xlsx, .xls) sont autorisés'));
+    }
+  }
+});
+
+const handleUpload = (req, res, next) => {
+  const contentType = req.headers['content-type'];
+  if (!contentType || !contentType.includes('multipart/form-data')) {
+    return res.status(400).json({
+      success: false,
+      error: 'Content-Type doit être multipart/form-data'
+    });
+  }
+  
+  upload.single('fichier')(req, res, (err) => {
+    if (err) {
+      console.error('❌ Erreur upload multer:', err.message);
+      let errorMessage = err.message;
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          errorMessage = 'Le fichier est trop volumineux (max 10MB)';
+        } else if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+          errorMessage = 'Nom de champ incorrect. Le fichier doit être envoyé avec le champ "fichier"';
+        }
+      }
+      
+      return res.status(400).json({
+        success: false,
+        error: errorMessage,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Aucun fichier fourni',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (!req.body.groupeId || !req.body.matiereId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Les champs groupeId et matiereId sont requis',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log('✅ Upload multer réussi');
+    console.log('📁 Fichier:', req.file.originalname);
+    console.log('📦 Body:', req.body);
+    
+    next();
+  });
+};
+
+// ================= FONCTIONS UTILITAIRES =================
+
+async function getGroupeInfo(groupeId) {
+  try {
+    console.log(`🔍 Récupération info groupe ID: ${groupeId}`);
+    const query = `SELECT g.*, c.nom as classe_nom FROM groupe g LEFT JOIN classe c ON g.classe_id = c.id WHERE g.id = $1`;
+    const result = await db.query(query, [groupeId]);
+    
+    if (result.rows.length === 0) {
+      throw new Error(`Groupe avec ID ${groupeId} non trouvé`);
+    }
+    
+    return result.rows[0];
+  } catch (error) {
+    console.error(`❌ Erreur récupération groupe: ${error.message}`);
+    throw error;
+  }
+}
+
+async function getMatiereInfo(matiereId) {
+  try {
+    console.log(`🔍 Récupération info matière ID: ${matiereId}`);
+    const query = `
+      SELECT 
+        m.*, 
+        ue.id as ue_id,
+        ue.libelle as ue_libelle,
+        ue.semestre_id,
+        ue.maquette_id,
+        sem.nom as semestre_nom,
+        maq.parcour
+      FROM matiere m
+      LEFT JOIN ue ON m.ue_id = ue.id
+      LEFT JOIN semestre sem ON ue.semestre_id = sem.id
+      LEFT JOIN maquette maq ON ue.maquette_id = maq.id
+      WHERE m.id = $1
+    `;
+    
+    const result = await db.query(query, [matiereId]);
+    
+    if (result.rows.length === 0) {
+      throw new Error(`Matière avec ID ${matiereId} non trouvée`);
+    }
+    
+    return result.rows[0];
+  } catch (error) {
+    console.error(`❌ Erreur récupération matière: ${error.message}`);
+    throw error;
+  }
+}
+
+// NOUVELLE FONCTION : Récupérer ou créer la session avec format "SESSION 1 2025-2026"
+async function getOrCreateSession(groupeId) {
+  try {
+    const currentYear = new Date().getFullYear();
+    const nextYear = currentYear + 1;
+    const anneeAcademique = `${currentYear}-${nextYear}`;
+    
+    console.log(`🔍 Recherche session pour groupe ${groupeId}`);
+    
+    // 1. Récupérer l'année académique du groupe via un étudiant
+    const anneeQuery = `
+      SELECT DISTINCT annee_academique_id 
+      FROM etudiant 
+      WHERE groupe_id = $1 
+      AND annee_academique_id IS NOT NULL 
+      LIMIT 1
+    `;
+    
+    const anneeResult = await db.query(anneeQuery, [groupeId]);
+    let anneeAcademiqueId = null;
+    
+    if (anneeResult.rows.length > 0) {
+      anneeAcademiqueId = anneeResult.rows[0].annee_academique_id;
+      console.log(`📅 Année académique ID trouvée: ${anneeAcademiqueId}`);
+    } else {
+      console.log('⚠️ Aucune année académique trouvée pour le groupe');
+      // Chercher l'année académique par son nom
+      const anneeNomQuery = `SELECT id FROM annee_academique WHERE nom = $1`;
+      const anneeNomResult = await db.query(anneeNomQuery, [anneeAcademique]);
+      if (anneeNomResult.rows.length > 0) {
+        anneeAcademiqueId = anneeNomResult.rows[0].id;
+        console.log(`📅 Année académique trouvée par nom: ${anneeAcademiqueId}`);
+      }
+    }
+    
+    // 2. Chercher une session existante pour cet année académique
+    const findQuery = `
+      SELECT * FROM session 
+      WHERE annee_academique_id = $1 
+      ORDER BY id DESC 
+      LIMIT 1
+    `;
+    
+    let sessionResult;
+    if (anneeAcademiqueId) {
+      sessionResult = await db.query(findQuery, [anneeAcademiqueId]);
+    } else {
+      // Fallback: chercher par nom
+      const fallbackQuery = `SELECT * FROM session WHERE nom LIKE $1 ORDER BY id DESC LIMIT 1`;
+      sessionResult = await db.query(fallbackQuery, [`%${anneeAcademique}%`]);
+    }
+    
+    if (sessionResult.rows.length > 0) {
+      console.log(`✅ Session existante trouvée: ${sessionResult.rows[0].nom}`);
+      return sessionResult.rows[0];
+    }
+    
+    // 3. Créer une nouvelle session avec format "SESSION 1 2025-2026"
+    console.log(`🔄 Création nouvelle session pour ${anneeAcademique}`);
+    
+    // Compter combien de sessions existent pour cette année
+    let sessionNumero = 1;
+    if (anneeAcademiqueId) {
+      const countQuery = `SELECT COUNT(*) as count FROM session WHERE annee_academique_id = $1`;
+      const countResult = await db.query(countQuery, [anneeAcademiqueId]);
+      sessionNumero = parseInt(countResult.rows[0].count) + 1;
+    }
+    
+    const sessionNom = `SESSION ${sessionNumero} ${anneeAcademique}`;
+    
+    const createQuery = `
+      INSERT INTO session (nom, annee_academique_id)
+      VALUES ($1, $2)
+      RETURNING *
+    `;
+    
+    const newSession = await db.query(createQuery, [sessionNom, anneeAcademiqueId]);
+    console.log(`✅ Nouvelle session créée: ${newSession.rows[0].nom} (ID: ${newSession.rows[0].id})`);
+    
+    return newSession.rows[0];
+  } catch (error) {
+    console.error(`❌ Erreur session: ${error.message}`);
+    throw new Error(`Erreur session: ${error.message}`);
+  }
+}
+
+async function getEtudiantsDuGroupe(groupeId) {
+  try {
+    console.log(`🔍 Récupération étudiants du groupe ID: ${groupeId}`);
+    const query = `
+      SELECT 
+        id, matricule, code_unique, matricule_iipea, 
+        nom, prenoms, groupe_id, annee_academique_id
+      FROM etudiant 
+      WHERE groupe_id = $1 
+      ORDER BY nom, prenoms
+    `;
+    
+    const result = await db.query(query, [groupeId]);
+    console.log(`📊 ${result.rows.length} étudiants récupérés pour le groupe ${groupeId}`);
+    
+    return result.rows;
+  } catch (error) {
+    console.error(`❌ Erreur récupération étudiants: ${error.message}`);
+    throw error;
+  }
+}
+
+function parseExcelFile(filePath, noteTypes) {
+  try {
+    console.log(`📊 Parsing fichier Excel: ${filePath}`);
+    
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Fichier non trouvé: ${filePath}`);
+    }
+    
+    const workbook = xlsx.readFile(filePath, { cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+    
+    if (rawData.length < 2) {
+      throw new Error('Le fichier Excel est vide ou ne contient pas de données');
+    }
+    
+    const headers = rawData[0].map(h => {
+      if (h === null || h === undefined) return '';
+      return h.toString().trim().toUpperCase();
+    });
+    
+    console.log('📋 En-têtes détectées:', headers);
+    
+    const findColumn = (possibleNames) => {
+      for (const name of possibleNames) {
+        const upperName = name.toUpperCase();
+        const index = headers.indexOf(upperName);
+        if (index !== -1) {
+          return { name: name, index: index, originalHeader: headers[index] };
+        }
+      }
+      
+      for (let i = 0; i < headers.length; i++) {
+        const header = headers[i];
+        for (const name of possibleNames) {
+          if (header.includes(name.toUpperCase()) || name.toUpperCase().includes(header)) {
+            return { name: name, index: i, originalHeader: header };
+          }
+        }
+      }
+      
+      return null;
+    };
+    
+    const codeCol = findColumn(['CODE', 'MATRICULE', 'MATRICULE_IIPEA', 'NUMERO', 'ID', 'IDENTIFIANT']);
+    if (!codeCol) {
+      throw new Error(`Colonne "Code" non trouvée. Colonnes disponibles: ${headers.join(', ')}`);
+    }
+    
+    const nomCol = findColumn(['NOM', 'NOM_ETUDIANT', 'NOM FAMILLE', 'LASTNAME']) || 
+                  { name: 'NOM', index: codeCol.index + 1, originalHeader: 'NOM' };
+    
+    const prenomCol = findColumn(['PRENOM', 'PRENOMS', 'PRENOM_ETUDIANT', 'FIRSTNAME']) || 
+                     { name: 'PRENOM', index: nomCol.index + 1, originalHeader: 'PRENOM' };
+    
+    const noteColumns = [];
+    const noteMappings = {
+      'NOTE 1': ['NOTE 1', 'NOTE1', 'NOTE_1', 'EXAMEN 1', 'EXAMEN1', 'CONTROLE 1', 'CC1'],
+      'NOTE 2': ['NOTE 2', 'NOTE2', 'NOTE_2', 'EXAMEN 2', 'EXAMEN2', 'CONTROLE 2', 'CC2'],
+      'PARTIEL': ['PARTIEL', 'EXAMEN FINAL', 'FINAL', 'COMPOSITION', 'EXAMEN', 'PARTIEL FINAL']
+    };
+    
+    if (!Array.isArray(noteTypes)) {
+      noteTypes = ['Note 1'];
+    }
+    
+    noteTypes.forEach(type => {
+      const typeUpper = type.toUpperCase();
+      const possibleNames = noteMappings[typeUpper] || [typeUpper.replace(/ /g, '_')];
+      const noteCol = findColumn(possibleNames);
+      
+      if (noteCol) {
+        let noteType;
+        if (typeUpper.includes('NOTE 1') || typeUpper.includes('NOTE1')) noteType = 'note_1';
+        else if (typeUpper.includes('NOTE 2') || typeUpper.includes('NOTE2')) noteType = 'note_2';
+        else if (typeUpper.includes('PARTIEL') || typeUpper.includes('FINAL')) noteType = 'partiel';
+        else noteType = type.toLowerCase().replace(/ /g, '_');
+        
+        noteColumns.push({
+          originalName: noteCol.name,
+          index: noteCol.index,
+          type: noteType,
+          header: noteCol.originalHeader
+        });
+      } else {
+        noteColumns.push({
+          originalName: type,
+          index: -1,
+          type: type.toLowerCase().replace(/ /g, '_'),
+          header: type
+        });
+      }
+    });
+    
+    const studentsData = [];
+    for (let i = 1; i < rawData.length; i++) {
+      const row = rawData[i];
+      
+      if (!row || row.length === 0 || row.every(cell => !cell || cell.toString().trim() === '')) {
+        continue;
+      }
+      
+      const codeValue = row[codeCol.index];
+      const nomValue = row[nomCol.index];
+      const prenomValue = row[prenomCol.index];
+      
+      if (!codeValue || codeValue.toString().trim() === '') {
+        continue;
+      }
+      
+      const student = {
+        matriculeIipea: codeValue.toString().trim(),
+        nom: nomValue ? nomValue.toString().trim() : '',
+        prenom: prenomValue ? prenomValue.toString().trim() : '',
+        ligne: i + 1,
+        note_1: 0,
+        note_2: 0,
+        partiel: 0
+      };
+      
+      noteColumns.forEach(noteCol => {
+        if (noteCol.index !== -1 && noteCol.index < row.length && row[noteCol.index] !== undefined && row[noteCol.index] !== null) {
+          let noteValue = row[noteCol.index];
+          
+          if (typeof noteValue === 'string') {
+            noteValue = noteValue.replace(',', '.').trim().toUpperCase();
+            
+            if (noteValue === '' || noteValue === '-' || noteValue === 'ABS' || 
+                noteValue === 'ABSENT' || noteValue === 'ABJ' || noteValue === 'ABANDON' ||
+                noteValue === 'N/A' || noteValue === 'NULL' || noteValue === 'NA') {
+              noteValue = 0;
+            }
+          }
+          
+          if (noteValue instanceof Date) {
+            noteValue = noteValue.getTime();
+          }
+          
+          const noteNum = parseFloat(noteValue);
+          if (!isNaN(noteNum) && isFinite(noteNum)) {
+            student[noteCol.type] = noteNum;
+          }
+        }
+      });
+      
+      studentsData.push(student);
+    }
+    
+    if (studentsData.length === 0) {
+      throw new Error('Aucun étudiant valide trouvé dans le fichier Excel.');
+    }
+    
+    console.log(`✅ ${studentsData.length} étudiants valides extraits du fichier`);
+    return studentsData;
+    
+  } catch (error) {
+    console.error(`❌ Erreur parsing Excel: ${error.message}`);
+    throw new Error(`Erreur parsing Excel: ${error.message}`);
+  }
+}
+
+function findEtudiantByMatriculeIipea(etudiants, matriculeIipea) {
+  if (!matriculeIipea || !etudiants || etudiants.length === 0) {
+    return null;
+  }
+  
+  const matriculeRecherche = matriculeIipea.toString().trim();
+  
+  for (const etudiant of etudiants) {
+    if (etudiant.matricule_iipea && etudiant.matricule_iipea.toString().trim() === matriculeRecherche) {
+      return etudiant;
+    }
+  }
+  
+  const rechercheSansEspaces = matriculeRecherche.replace(/\s/g, '');
+  for (const etudiant of etudiants) {
+    const matriculeSansEspaces = etudiant.matricule_iipea ? etudiant.matricule_iipea.toString().trim().replace(/\s/g, '') : '';
+    if (matriculeSansEspaces === rechercheSansEspaces) {
+      return etudiant;
+    }
+  }
+  
+  const rechercheLower = matriculeRecherche.toLowerCase();
+  for (const etudiant of etudiants) {
+    if (etudiant.matricule_iipea && etudiant.matricule_iipea.toString().trim().toLowerCase() === rechercheLower) {
+      return etudiant;
+    }
+  }
+  
+  for (const etudiant of etudiants) {
+    if (etudiant.code_unique && etudiant.code_unique.toString().trim() === matriculeRecherche) {
+      return etudiant;
+    }
+  }
+  
+  for (const etudiant of etudiants) {
+    if (etudiant.matricule && etudiant.matricule.toString().trim() === matriculeRecherche) {
+      return etudiant;
+    }
+  }
+  
+  return null;
+}
+// calcule des moyennes 
+//==============================================================================================================
+function calculerMoyenne(note1, note2, partiel, parcour) {
+  let moyenne = 0;
+  
+  if (partiel === 0) {
+    const notes = [note1, note2].filter(n => n > 0);
+    if (notes.length > 0) {
+      moyenne = notes.reduce((a, b) => a + b, 0) / notes.length;
+    }
+  } else {
+    const poidsNote1 = note1 > 0 ? 0.3 : 0;
+    const poidsNote2 = note2 > 0 ? 0.3 : 0;
+    const poidsPartiel = partiel > 0 ? 0.4 : 0;
+    
+    const totalPoids = poidsNote1 + poidsNote2 + poidsPartiel;
+    
+    if (totalPoids > 0) {
+      moyenne = (note1 * poidsNote1 + note2 * poidsNote2 + partiel * poidsPartiel) / totalPoids;
+    }
+  }
+  
+  return Math.round(moyenne * 100) / 100;
+}
+
+async function checkExistingNote(etudiantId, matiereId, sessionId) {
+  try {
+    const query = `SELECT id FROM note WHERE etudiant_id = $1 AND matiere_id = $2 AND session_id = $3 LIMIT 1`;
+    const result = await db.query(query, [etudiantId, matiereId, sessionId]);
+    
+    return result.rows.length > 0 ? result.rows[0].id : null;
+  } catch (error) {
+    console.error('❌ Erreur vérification note existante:', error.message);
+    return null;
+  }
+}
+
+async function upsertNote(noteData, fichierSource, noteId = null) {
+  try {
+    if (noteId) {
+      const updateQuery = `
+        UPDATE note SET
+          note1 = $1, note2 = $2, partiel = $3, moyenne = $4,
+          coefficient = $5, fichier_source = $6, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $7
+        RETURNING id
+      `;
+      
+      const result = await db.query(updateQuery, [
+        noteData.note1, noteData.note2, noteData.partiel, noteData.moyenne,
+        noteData.coefficient, fichierSource, noteId
+      ]);
+      
+      return { action: 'update', id: result.rows[0].id };
+    } else {
+      const insertQuery = `
+        INSERT INTO note (
+          note1, note2, partiel, moyenne,
+          matiere_id, etudiant_id, session_id, semestre_id,
+          coefficient, fichier_source, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
+        RETURNING id
+      `;
+      
+      const result = await db.query(insertQuery, [
+        noteData.note1, noteData.note2, noteData.partiel, noteData.moyenne,
+        noteData.matiereId, noteData.etudiantId, noteData.sessionId, noteData.semestreId,
+        noteData.coefficient, fichierSource
+      ]);
+      
+      return { action: 'insert', id: result.rows[0].id };
+    }
+  } catch (error) {
+    console.error(`❌ Erreur upsert note: ${error.message}`);
+    throw error;
+  }
+}
+
+// ================= CONTROLLER PRINCIPAL =================
+// ================= CONTROLLER PRINCIPAL =================
+exports.uploadNotes = async (req, res) => {
+  console.log('\n' + '='.repeat(80));
+  console.log('🚀 DÉBUT TRAITEMENT UPLOAD NOTES');
+  console.log('='.repeat(80));
+  
+  let uploadedFile = null;
+  let fileSaved = false; // Nouveau flag pour savoir si le fichier doit être conservé
+  
+  try {
+    const { groupeId, matiereId, noteTypes } = req.body;
+    
+    if (!groupeId || !matiereId || !noteTypes) {
+      throw new Error('groupeId, matiereId et noteTypes sont requis');
+    }
+
+    if (!req.file) {
+      throw new Error('Aucun fichier fourni');
+    }
+
+    uploadedFile = req.file;
+    
+    console.log(`📂 Fichier uploadé: ${uploadedFile.originalname} (${uploadedFile.size} bytes)`);
+    console.log(`📋 Paramètres: groupeId=${groupeId}, matiereId=${matiereId}`);
+    
+    let parsedNoteTypes;
+    try {
+      parsedNoteTypes = JSON.parse(noteTypes);
+    } catch (parseError) {
+      parsedNoteTypes = [noteTypes];
+    }
+    
+    // Récupérer les informations de base
+    const groupeInfo = await getGroupeInfo(groupeId);
+    const matiereInfo = await getMatiereInfo(matiereId);
+    const session = await getOrCreateSession(groupeId);
+    const etudiants = await getEtudiantsDuGroupe(groupeId);
+    
+    console.log('\n✅ Informations récupérées:');
+    console.log(`   Groupe: ${groupeInfo.nom} (ID: ${groupeInfo.id})`);
+    console.log(`   Matière: ${matiereInfo.nom} (ID: ${matiereInfo.id})`);
+    console.log(`   Session: ${session.nom} (ID: ${session.id})`);
+    console.log(`   Étudiants dans le groupe: ${etudiants.length}`);
+    
+    // Parser le fichier Excel
+    const studentsData = parseExcelFile(uploadedFile.path, parsedNoteTypes);
+    
+    console.log(`\n✅ ${studentsData.length} étudiants trouvés dans le fichier Excel`);
+    
+    const results = {
+      processedCount: 0,
+      inserted: 0,
+      updated: 0,
+      errors: [],
+      etudiantsNonTrouves: []
+    };
+    
+    // Traiter chaque étudiant
+    for (const studentData of studentsData) {
+      try {
+        console.log(`\n--- Ligne ${studentData.ligne} ---`);
+        console.log(`🔍 Recherche: "${studentData.matriculeIipea}"`);
+        
+        const etudiant = findEtudiantByMatriculeIipea(etudiants, studentData.matriculeIipea);
+        
+        if (!etudiant) {
+          console.log(`❌ Non trouvé dans la base de données`);
+          results.etudiantsNonTrouves.push({
+            matriculeIipea: studentData.matriculeIipea,
+            nom: studentData.nom,
+            prenom: studentData.prenom,
+            ligne: studentData.ligne
+          });
+          continue;
+        }
+        
+        const noteValues = {
+          note1: studentData.note_1 || 0,
+          note2: studentData.note_2 || 0,
+          partiel: studentData.partiel || 0
+        };
+        
+        const moyenne = calculerMoyenne(
+          noteValues.note1,
+          noteValues.note2,
+          noteValues.partiel,
+          matiereInfo.parcour
+        );
+        
+        const existingNoteId = await checkExistingNote(
+          etudiant.id,
+          matiereInfo.id,
+          session.id
+        );
+        
+        const noteData = {
+          note1: noteValues.note1,
+          note2: noteValues.note2,
+          partiel: noteValues.partiel,
+          moyenne: moyenne,
+          matiereId: matiereInfo.id,
+          etudiantId: etudiant.id,
+          sessionId: session.id,
+          semestreId: matiereInfo.semestre_id,
+          coefficient: matiereInfo.coefficient || 1
+        };
+        
+        const upsertResult = await upsertNote(
+          noteData,
+          uploadedFile.filename,
+          existingNoteId
+        );
+        
+        if (upsertResult.action === 'insert') {
+          results.inserted++;
+          console.log(`✅ NOUVELLE note pour ${etudiant.nom} ${etudiant.prenoms}`);
+        } else {
+          results.updated++;
+          console.log(`🔄 Note MIS À JOUR pour ${etudiant.nom} ${etudiant.prenoms}`);
+        }
+        
+        results.processedCount++;
+        
+      } catch (error) {
+        console.error(`❌ Erreur ligne ${studentData.ligne}:`, error.message);
+        results.errors.push({
+          matriculeIipea: studentData.matriculeIipea,
+          nom: studentData.nom,
+          prenom: studentData.prenom,
+          ligne: studentData.ligne,
+          erreur: error.message
+        });
+      }
+    }
+    
+    // Vérifier si le traitement a réussi
+    const hasErrors = results.errors.length > 0;
+    const noStudentsFound = results.etudiantsNonTrouves.length === studentsData.length;
+    const success = results.processedCount > 0 && !hasErrors;
+    
+    console.log('\n' + '='.repeat(80));
+    console.log('📊 RÉSULTAT DU TRAITEMENT');
+    console.log('='.repeat(80));
+    console.log(`   Total traitées: ${results.processedCount}`);
+    console.log(`   Nouvelles notes: ${results.inserted}`);
+    console.log(`   Notes mises à jour: ${results.updated}`);
+    console.log(`   Étudiants non trouvés: ${results.etudiantsNonTrouves.length}`);
+    console.log(`   Erreurs: ${results.errors.length}`);
+    console.log(`   Succès: ${success ? '✅ OUI' : '❌ NON'}`);
+    
+    if (success) {
+      // Si succès: fichier conservé
+      fileSaved = true;
+      console.log('💾 Fichier conservé dans:', uploadedFile.path);
+      
+      const response = {
+        success: true,
+        message: `Importation réussie: ${results.processedCount} notes traitées`,
+        details: {
+          fichier: uploadedFile.originalname,
+          fichierSauvegarde: uploadedFile.filename,
+          chemin: uploadedFile.path,
+          parcour: matiereInfo.parcour || 'Non spécifié',
+          matiere: matiereInfo.nom,
+          groupe: groupeInfo.nom,
+          session: session.nom,
+          stats: {
+            totalTraitees: results.processedCount,
+            notesInserees: results.inserted,
+            notesMisesAJour: results.updated,
+            erreurs: results.errors.length,
+            etudiantsNonTrouves: results.etudiantsNonTrouves.length
+          }
+        }
+      };
+      
+      if (results.etudiantsNonTrouves.length > 0) {
+        response.avertissements = {
+          message: `${results.etudiantsNonTrouves.length} étudiant(s) non trouvé(s) dans le groupe`,
+          etudiants: results.etudiantsNonTrouves.slice(0, 10),
+          total: results.etudiantsNonTrouves.length
+        };
+      }
+      
+      res.status(200).json(response);
+      
+    } else {
+      // Si échec: fichier supprimé
+      console.log('❌ Échec du traitement - suppression du fichier');
+      if (uploadedFile && fs.existsSync(uploadedFile.path)) {
+        try {
+          fs.unlinkSync(uploadedFile.path);
+          console.log('🗑️ Fichier supprimé:', uploadedFile.path);
+        } catch (cleanupError) {
+          console.error('❌ Erreur suppression fichier:', cleanupError.message);
+        }
+      }
+      
+      // Déterminer le message d'erreur approprié
+      let errorMessage = 'Erreur lors de l\'importation';
+      if (noStudentsFound) {
+        errorMessage = 'Aucun étudiant du fichier Excel n\'a été trouvé dans le groupe. Vérifiez les matricule_iipea.';
+      } else if (hasErrors) {
+        errorMessage = `${results.errors.length} erreur(s) lors du traitement`;
+      } else if (results.processedCount === 0) {
+        errorMessage = 'Aucune note n\'a pu être traitée. Vérifiez le format du fichier.';
+      }
+      
+      const errorResponse = {
+        success: false,
+        error: errorMessage,
+        details: {
+          stats: {
+            totalTraitees: results.processedCount,
+            notesInserees: results.inserted,
+            notesMisesAJour: results.updated,
+            erreurs: results.errors.length,
+            etudiantsNonTrouves: results.etudiantsNonTrouves.length
+          }
+        },
+        timestamp: new Date().toISOString()
+      };
+      
+      // Ajouter les avertissements si des étudiants n'ont pas été trouvés
+      if (results.etudiantsNonTrouves.length > 0) {
+        errorResponse.avertissements = {
+          message: `${results.etudiantsNonTrouves.length} étudiant(s) non trouvé(s) dans le groupe`,
+          etudiants: results.etudiantsNonTrouves.slice(0, 5),
+          total: results.etudiantsNonTrouves.length
+        };
+      }
+      
+      res.status(400).json(errorResponse);
+    }
+
+  } catch (error) {
+    console.error('\n' + '❌'.repeat(40));
+    console.error('❌ ERREUR CRITIQUE UPLOAD NOTES:');
+    console.error('❌ Message:', error.message);
+    console.error('❌ Stack:', error.stack);
+    
+    // Supprimer le fichier en cas d'erreur critique
+    if (uploadedFile && fs.existsSync(uploadedFile.path) && !fileSaved) {
+      try {
+        fs.unlinkSync(uploadedFile.path);
+        console.log('🗑️ Fichier supprimé (erreur critique):', uploadedFile.path);
+      } catch (cleanupError) {
+        console.error('❌ Erreur suppression fichier:', cleanupError.message);
+      }
+    }
+    
+    const errorResponse = {
+      success: false,
+      error: 'Erreur lors de l\'importation',
+      details: error.message,
+      suggestion: 'Vérifiez que: 1) Le fichier Excel est valide, 2) La colonne "Code" correspond exactement au matricule_iipea, 3) Le groupe et la matière existent',
+      timestamp: new Date().toISOString(),
+      debug: process.env.NODE_ENV === 'development' ? {
+        stack: error.stack,
+        body: req.body,
+        file: uploadedFile
+      } : undefined
+    };
+    
+    res.status(500).json(errorResponse);
+  }
+};
+
+// Nouvelle route pour vérifier si des notes existent déjà
+// Nouvelle route pour vérifier si des notes existent déjà
+exports.checkExistingNotes = async (req, res) => {
+  try {
+    const { groupeId, matiereId } = req.params;
+    
+    console.log('🔍 Vérification notes existantes:', { groupeId, matiereId });
+    
+    if (!groupeId || !matiereId) {
+      return res.status(400).json({
+        success: false,
+        error: 'groupeId et matiereId sont requis'
+      });
+    }
+    
+    // D'abord vérifier si le groupe et la matière existent
+    try {
+      await getGroupeInfo(groupeId);
+      await getMatiereInfo(matiereId);
+    } catch (error) {
+      return res.status(404).json({
+        success: false,
+        error: error.message
+      });
+    }
+    
+    // Récupérer la session actuelle
+    const currentYear = new Date().getFullYear();
+    const nextYear = currentYear + 1;
+    const anneeAcademique = `${currentYear}-${nextYear}`;
+    
+    const sessionQuery = `SELECT id FROM session WHERE nom LIKE $1 ORDER BY id DESC LIMIT 1`;
+    const sessionResult = await db.query(sessionQuery, [`%${anneeAcademique}%`]);
+    
+    let sessionId = null;
+    if (sessionResult.rows.length > 0) {
+      sessionId = sessionResult.rows[0].id;
+    }
+    
+    if (!sessionId) {
+      return res.json({
+        success: true,
+        notesExistantes: false,
+        message: 'Aucune session trouvée pour cette année. Importation créera une nouvelle session.',
+        details: null
+      });
+    }
+    
+    // Compter les notes pour cette matière, groupe et session
+    const query = `
+      SELECT COUNT(*) as count_note,
+             MAX(n.created_at) as derniere_importation,
+             MAX(n.fichier_source) as dernier_fichier,
+             COUNT(DISTINCT n.etudiant_id) as etudiants_notes
+      FROM note n
+      INNER JOIN etudiant e ON n.etudiant_id = e.id
+      WHERE e.groupe_id = $1 
+      AND n.matiere_id = $2
+      AND n.session_id = $3
+    `;
+    
+    const result = await db.query(query, [groupeId, matiereId, sessionId]);
+    const countNote = parseInt(result.rows[0].count_note);
+    const derniereImportation = result.rows[0].derniere_importation;
+    const dernierFichier = result.rows[0].dernier_fichier;
+    const etudiantsNotes = parseInt(result.rows[0].etudiants_notes);
+    
+    // Récupérer le nombre total d'étudiants dans le groupe
+    const etudiantsQuery = `SELECT COUNT(*) as total FROM etudiant WHERE groupe_id = $1`;
+    const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
+    const totalEtudiants = parseInt(etudiantsResult.rows[0].total);
+    
+    let message = '';
+    if (countNote > 0) {
+      const pourcentage = totalEtudiants > 0 ? Math.round((etudiantsNotes / totalEtudiants) * 100) : 0;
+      message = `${countNote} notes existent déjà pour cette matière (${etudiantsNotes}/${totalEtudiants} étudiants, ${pourcentage}%). Importation = MISE À JOUR.`;
+    } else {
+      message = 'Aucune note n\'existe pour cette matière. Importation = NOUVELLES NOTES.';
+    }
+    
+    res.json({
+      success: true,
+      notesExistantes: countNote > 0,
+      count: countNote,
+      etudiantsAvecNotes: etudiantsNotes,
+      totalEtudiants: totalEtudiants,
+      pourcentage: totalEtudiants > 0 ? Math.round((etudiantsNotes / totalEtudiants) * 100) : 0,
+      derniereImportation: derniereImportation,
+      dernierFichier: dernierFichier,
+      message: message,
+      warning: countNote > 0 ? 'Importation = MISE À JOUR des notes existantes' : 'Importation = NOUVELLES notes'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur vérification notes:', error.message);
+    res.status(500).json({ 
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+// Télécharger template (conservé au cas où)
+exports.downloadTemplate = async (req, res) => {
+  try {
+    const { groupeId, matiereId } = req.params;
+    
+    console.log('📥 Génération template pour:', { groupeId, matiereId });
+    
+    const groupeInfo = await getGroupeInfo(groupeId);
+    const matiereInfo = await getMatiereInfo(matiereId);
+    const etudiants = await getEtudiantsDuGroupe(groupeId);
+    
+    console.log(`✅ Informations récupérées: ${etudiants.length} étudiants`);
+    
+    const data = [
+      ['Code', 'Nom', 'Prénom', 'Note 1', 'Note 2', 'Partiel']
+    ];
+    
+    etudiants.forEach(etudiant => {
+      const matricule = etudiant.matricule_iipea || etudiant.matricule || etudiant.code_unique || '';
+      data.push([
+        matricule,
+        etudiant.nom || '',
+        etudiant.prenoms || '',
+        '', '', ''
+      ]);
+    });
+    
+    data.push([]);
+    data.push(['INSTRUCTIONS IMPORTANTES:', '', '', '', '', '']);
+    data.push(['1. Ne modifiez PAS la colonne "Code" (matricule_iipea)', '', '', '', '', '']);
+    data.push(['2. Utilisez la virgule pour les décimales (ex: 15,5)', '', '', '', '', '']);
+    data.push(['3. Laissez vide ou mettez 0 si note absente', '', '', '', '', '']);
+    
+    const workbook = xlsx.utils.book_new();
+    const worksheet = xlsx.utils.aoa_to_sheet(data);
+    
+    const colWidths = [
+      { wch: 25 }, { wch: 25 }, { wch: 25 },
+      { wch: 12 }, { wch: 12 }, { wch: 12 }
+    ];
+    worksheet['!cols'] = colWidths;
+    
+    xlsx.utils.book_append_sheet(workbook, worksheet, 'Notes');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    
+    const safeMatiereName = matiereInfo.nom.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
+    const safeGroupeName = groupeInfo.nom.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+    const filename = `Template_${safeMatiereName}_${safeGroupeName}.xlsx`;
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+    
+    console.log('✅ Template généré:', filename);
+    res.send(buffer);
+    
+  } catch (error) {
+    console.error('❌ Erreur génération template:', error.message);
+    res.status(500).json({ 
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+// ================= MIDDLEWARE ET EXPORT =================
+exports.uploadMiddleware = handleUpload;
+exports.disableBodyParserForFormData = disableBodyParserForFormData;
+exports.testAPI = async (req, res) => {
+  res.json({ success: true, message: 'API fonctionnelle' });
+};
+// Ajoutez ces fonctions à la fin de votre fichier chargementNote.js
+
+exports.getNotesByGroupe = async (req, res) => {
+  try {
+    const { groupeId } = req.params;
+    const query = `
+      SELECT n.*, e.nom, e.prenoms, e.matricule_iipea
+      FROM note n
+      INNER JOIN etudiant e ON n.etudiant_id = e.id
+      WHERE e.groupe_id = $1
+      ORDER BY e.nom, e.prenoms
+    `;
+    const result = await db.query(query, [groupeId]);
+    
+    res.json({
+      success: true,
+      count: result.rows.length,
+      notes: result.rows
+    });
+  } catch (error) {
+    console.error('❌ Erreur récupération notes:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+exports.getUploadStatus = async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        COUNT(*) as total_uploads,
+        MAX(created_at) as last_upload,
+        COUNT(DISTINCT matiere_id) as matieres_differentes,
+        COUNT(DISTINCT session_id) as sessions_differentes
+      FROM note
+    `;
+    const result = await db.query(query);
+    
+    res.json({
+      success: true,
+      status: result.rows[0]
+    });
+  } catch (error) {
+    console.error('❌ Erreur statut upload:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+exports.getGroupeDetails = async (req, res) => {
+  try {
+    const { groupeId } = req.params;
+    
+    // Récupérer les infos du groupe
+    const groupeQuery = `
+      SELECT g.*, c.nom as classe_nom, COUNT(e.id) as nombre_etudiants
+      FROM groupe g
+      LEFT JOIN classe c ON g.classe_id = c.id
+      LEFT JOIN etudiant e ON g.id = e.groupe_id
+      WHERE g.id = $1
+      GROUP BY g.id, c.nom
+    `;
+    
+    const groupeResult = await db.query(groupeQuery, [groupeId]);
+    
+    if (groupeResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Groupe non trouvé' });
+    }
+    
+    // Récupérer les matières du groupe (via les notes)
+    const matieresQuery = `
+      SELECT DISTINCT m.id, m.nom, m.code, COUNT(n.id) as nombre_notes
+      FROM note n
+      INNER JOIN matiere m ON n.matiere_id = m.id
+      INNER JOIN etudiant e ON n.etudiant_id = e.id
+      WHERE e.groupe_id = $1
+      GROUP BY m.id, m.nom, m.code
+    `;
+    
+    const matieresResult = await db.query(matieresQuery, [groupeId]);
+    
+    res.json({
+      success: true,
+      groupe: groupeResult.rows[0],
+      matieres: matieresResult.rows,
+      stats: {
+        nombre_etudiants: groupeResult.rows[0].nombre_etudiants,
+        nombre_matieres: matieresResult.rows.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erreur détails groupe:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// Optionnel : Si vous voulez garder la route validate, ajoutez cette fonction
+exports.validateExcelFile = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Aucun fichier fourni'
+      });
+    }
+    
+    const filePath = req.file.path;
+    const workbook = xlsx.readFile(filePath);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+    
+    const headers = data[0].map(h => h ? h.toString().trim() : '');
+    
+    // Vérifier la présence de colonnes minimales
+    const requiredColumns = ['CODE', 'NOM'];
+    const missingColumns = requiredColumns.filter(col => 
+      !headers.some(header => header.toUpperCase().includes(col))
+    );
+    
+    if (missingColumns.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Colonnes manquantes: ${missingColumns.join(', ')}`,
+        headers: headers
+      });
+    }
+    
+    // Compter les lignes avec données
+    const dataRows = data.slice(1).filter(row => 
+      row.some(cell => cell && cell.toString().trim() !== '')
+    );
+    
+    res.json({
+      success: true,
+      validation: {
+        valid: true,
+        message: 'Fichier Excel valide',
+        details: {
+          nombre_lignes: data.length,
+          nombre_etudiants: dataRows.length,
+          headers: headers,
+          fichier: req.file.originalname
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erreur validation fichier:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Erreur lors de la validation du fichier' 
+    });
+  }
+};
