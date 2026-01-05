@@ -50,6 +50,9 @@ router.get('/status', notesController.getUploadStatus);
 router.get('/groupe/:groupeId/details', notesController.getGroupeDetails);
 // NOUVELLE ROUTE: Vérifier les notes existantes
 router.get('/check-existing/:groupeId/:matiereId', notesController.checkExistingNotes);
+// Routes pour gérer le type d'évaluation
+router.get('/type-evaluation/:matiereId', notesController.getTypeEvaluation);
+router.put('/type-evaluation/:matiereId', notesController.updateTypeEvaluation);
 
 // Route de debug pour vérifier
 router.get('/debug-exports', (req, res) => {

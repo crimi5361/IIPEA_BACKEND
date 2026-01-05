@@ -7,10 +7,10 @@ exports.createMatiere = async (req, res) => {
       nom,
       coefficient,
       ue_id,
-      volume_horaire_cm = 0, // Valeur par défaut
-      taux_horaire_cm = 0,   // Valeur par défaut
-      volume_horaire_td = 0, // Valeur par défaut
-      taux_horaire_td = 0,   // Valeur par défaut
+      taux_horaire_cm = 0,   
+      volume_horaire_td = 0, 
+      taux_horaire_td = 0,   
+      volume_horaire_cm = 0, 
     } = req.body;
     
     // Validation des données - seulement les champs vraiment obligatoires
