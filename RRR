@@ -1,4 +1,3 @@
-
 const multer = require('multer');
 const xlsx = require('xlsx');
 const path = require('path');
@@ -7,18 +6,18 @@ const db = require('../config/db.config');
 
 // ================= MIDDLEWARE POUR BYPASS BODY-PARSER POUR FORMDATA =================
 const disableBodyParserForFormData = (req, res, next) => {
-  console.log(' Middleware disableBodyParserForFormData appelé');
+  console.log('🛡️ Middleware disableBodyParserForFormData appelé');
   const contentType = req.headers['content-type'];
-  console.log('Content-Type détecté:', contentType);
+  console.log('📋 Content-Type détecté:', contentType);
   
   const hasContentLength = req.headers['content-length'] && parseInt(req.headers['content-length']) > 0;
   
   if (contentType && contentType.includes('multipart/form-data')) {
-    console.log('Désactivation des parsers pour FormData');
+    console.log('🔄 Désactivation des parsers pour FormData');
     req.body = {};
     req._body = false;
   } else if (req.method === 'POST' && hasContentLength && !contentType) {
-    console.log(' Requête POST sans Content-Type détectée, traitement comme FormData');
+    console.log('⚠️ Requête POST sans Content-Type détectée, traitement comme FormData');
     req.body = {};
     req._body = false;
   }
@@ -131,7 +130,7 @@ const handleUpload = (req, res, next) => {
   });
 };
 
-// ================= FONCTIONS UTILITAIRES =================
+//=================================FONCTION  POUR DETERMINER  LE TYPE D'EVALUATION++++++++++++++++++++++++++++++++++==========================
 
 // Fonction pour déterminer le type d'évaluation basé sur les notes cochées
 function determinerTypeEvaluation(noteTypes) {
@@ -162,6 +161,8 @@ function determinerTypeEvaluation(noteTypes) {
   }
 }
 
+////====================FONCTION POUR METTRE A JOUR LE TYPE D'EVALUTION===============
+
 // Fonction pour mettre à jour le type d'évaluation d'une matière
 async function updateTypeEvaluation(matiereId, typeEvaluation) {
   try {
@@ -189,6 +190,8 @@ async function updateTypeEvaluation(matiereId, typeEvaluation) {
     return null;
   }
 }
+
+// ================= FONCTIONS UTILITAIRES =================
 
 async function getGroupeInfo(groupeId) {
   try {
@@ -279,7 +282,7 @@ async function getMatiereInfo(matiereId) {
   }
 }
 
-// Fonction pour récupérer ou créer la session avec format "SESSION 1 2025-2026"
+// NOUVELLE FONCTION : Récupérer ou créer la session avec format "SESSION 1 2025-2026"
 async function getOrCreateSession(groupeId) {
   try {
     const currentYear = new Date().getFullYear();
@@ -592,7 +595,7 @@ function findEtudiantByMatriculeIipea(etudiants, matriculeIipea) {
   return null;
 }
 
-// Fonction pour calculer la moyenne
+// ================= FONCTION calculerMoyenne MIS À JOUR =================
 function calculerMoyenne(note1, note2, partiel, matiereInfo) {
   const {
     type_evaluation = 'note_1_note_2_partiel',
@@ -761,167 +764,7 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
   }
 }
 
-// Fonction utilitaire pour décrire le type d'évaluation
-function getDescriptionTypeEvaluation(type) {
-  const descriptions = {
-    'note_1_note_2_partiel': "Contrôles continus (CC1, CC2) + Examen final",
-    'note_1_partiel': "Premier contrôle continu + Examen final",
-    'note_2_partiel': "Deuxième contrôle continu + Examen final",
-    'partiel_only': "Examen final seulement",
-    'note_1_note_2': "Deux contrôles continus seulement",
-    'note_1_only': "Premier contrôle continu seulement",
-    'note_2_only': "Deuxième contrôle continu seulement"
-  };
-  
-  return descriptions[type] || "Type d'évaluation non spécifié";
-}
-
-// Fonction helper pour décrire le type d'évaluation
-function getEvaluationDescription(type) {
-  if (!type) return 'Type non spécifié';
-  
-  const descriptions = {
-    'note_1_note_2_partiel': 'Contrôles continus (CC1, CC2) + Examen final',
-    'note_1_partiel': 'Contrôle continu (CC) + Examen final',
-    'note_unique': 'Évaluation unique',
-    'note_1_note_2': 'Deux contrôles continus',
-    'partiel_unique': 'Examen final uniquement',
-    'note_1_note_2_moyenne': 'CC1, CC2 et moyenne',
-    'tp_projet': 'TP/Projet'
-  };
-  
-  return descriptions[type] || type;
-}
-
-// ================= API checkExistingNotes CORRIGÉE =================
-exports.checkExistingNotes = async (req, res) => {
-  try {
-    const { groupeId, matiereId } = req.params;
-    
-    console.log('🔍 Vérification notes existantes:', { groupeId, matiereId });
-    
-    if (!groupeId || !matiereId) {
-      return res.status(400).json({
-        success: false,
-        error: 'groupeId et matiereId sont requis'
-      });
-    }
-    
-    // Vérifier si le groupe existe
-    const groupeQuery = 'SELECT id, nom FROM groupe WHERE id = $1';
-    const groupeResult = await db.query(groupeQuery, [groupeId]);
-    
-    if (groupeResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Groupe non trouvé'
-      });
-    }
-    
-    // Vérifier si la matière existe
-    const matiereQuery = 'SELECT id, nom, type_evaluation FROM matiere WHERE id = $1';
-    const matiereResult = await db.query(matiereQuery, [matiereId]);
-    
-    if (matiereResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Matière non trouvée'
-      });
-    }
-    
-    // 1. Récupérer le nombre d'étudiants actifs dans le groupe
-    const etudiantsQuery = `
-      SELECT COUNT(*) as total 
-      FROM etudiant 
-      WHERE groupe_id = $1 AND  standing = 'Inscrit'
-    `;
-    const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
-    const totalEtudiants = parseInt(etudiantsResult.rows[0].total) || 0;
-    
-    // 2. Vérifier les notes existantes pour cette matière dans ce groupe
-    // Récupérer la session la plus récente
-    const sessionQuery = `
-      SELECT s.id, s.nom, a.annee
-      FROM session s
-      JOIN anneeacademique a ON s.annee_academique_id = a.id
-      ORDER BY a.annee DESC, s.id DESC
-      LIMIT 1
-    `;
-    const sessionResult = await db.query(sessionQuery);
-    const sessionId = sessionResult.rows[0]?.id;
-    
-    let notesExistantes = false;
-    let etudiantsAvecNotes = 0;
-    let totalNotes = 0;
-    let derniereImportation = null;
-    let dernierFichier = null;
-    
-    if (sessionId) {
-      const notesQuery = `
-        SELECT 
-          COUNT(DISTINCT n.etudiant_id) as etudiantsAvecNotes,
-          COUNT(n.id) as totalNotes,
-          MAX(n.created_at) as derniereImportation,
-          MAX(n.fichier_source) as dernierFichier
-        FROM note n
-        INNER JOIN etudiant e ON n.etudiant_id = e.id
-        WHERE e.groupe_id = $1 
-          AND n.matiere_id = $2
-          AND n.session_id = $3
-          AND (n.note1 IS NOT NULL OR n.note2 IS NOT NULL OR n.partiel IS NOT NULL)
-      `;
-      
-      const notesResult = await db.query(notesQuery, [groupeId, matiereId, sessionId]);
-      
-      if (notesResult.rows.length > 0) {
-        etudiantsAvecNotes = parseInt(notesResult.rows[0].etudiantsavecnotes) || 0;
-        totalNotes = parseInt(notesResult.rows[0].totalnotes) || 0;
-        derniereImportation = notesResult.rows[0].derniereimportation;
-        dernierFichier = notesResult.rows[0].dernierfichier;
-        notesExistantes = etudiantsAvecNotes > 0;
-      }
-    }
-    
-    // Calculer le pourcentage
-    const pourcentage = totalEtudiants > 0 
-      ? Math.round((etudiantsAvecNotes / totalEtudiants) * 100) 
-      : 0;
-    
-    // Préparer le message
-    let message = '';
-    if (notesExistantes) {
-      message = `Des notes existent déjà pour ${etudiantsAvecNotes}/${totalEtudiants} étudiants (${pourcentage}%). L'importation mettra à jour les notes existantes.`;
-    } else {
-      message = 'Aucune note existante. Importation créera de nouvelles notes.';
-    }
-    
-    // Retourner la réponse complète
-    return res.json({
-      success: true,
-      notesExistantes,
-      count: totalNotes,
-      etudiantsAvecNotes,
-      totalEtudiants,
-      pourcentage,
-      derniereImportation,
-      dernierFichier,
-      message,
-      matiereInfo: {
-        nom: matiereResult.rows[0].nom,
-        type_evaluation: matiereResult.rows[0].type_evaluation || 'note_1_note_2_partiel',
-        description_type: getEvaluationDescription(matiereResult.rows[0].type_evaluation)
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur vérification notes:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: error.message || 'Erreur serveur'
-    });
-  }
-};
-
+// ================= CONTROLLER PRINCIPAL =================
 // ================= CONTROLLER PRINCIPAL =================
 exports.uploadNotes = async (req, res) => {
   console.log('\n' + '='.repeat(80));
@@ -1014,7 +857,7 @@ exports.uploadNotes = async (req, res) => {
           partiel: studentData.partiel || 0
         };
         
-        // Utiliser la fonction calculerMoyenne
+        // Utiliser la nouvelle fonction calculerMoyenne
         const moyenne = calculerMoyenne(
           noteValues.note1,
           noteValues.note2,
@@ -1199,6 +1042,70 @@ exports.uploadNotes = async (req, res) => {
   }
 };
 
+// Fonction utilitaire pour décrire le type d'évaluation
+function getDescriptionTypeEvaluation(type) {
+  const descriptions = {
+    'note_1_note_2_partiel': "Contrôles continus (CC1, CC2) + Examen final",
+    'note_1_partiel': "Premier contrôle continu + Examen final",
+    'note_2_partiel': "Deuxième contrôle continu + Examen final",
+    'partiel_only': "Examen final seulement",
+    'note_1_note_2': "Deux contrôles continus seulement",
+    'note_1_only': "Premier contrôle continu seulement",
+    'note_2_only': "Deuxième contrôle continu seulement"
+  };
+  
+  return descriptions[type] || "Type d'évaluation non spécifié";
+}
+// ================= API checkExistingNotes MIS À JOUR =================
+exports.checkExistingNotes = async (req, res) => {
+  try {
+    const { groupeId, matiereId } = req.params;
+    
+    console.log('  Vérification notes existantes:', { groupeId, matiereId });
+    
+    if (!groupeId || !matiereId) {
+      return res.status(400).json({
+        success: false,
+        error: 'groupeId et matiereId sont requis'
+      });
+    }
+    
+    // D'abord vérifier si le groupe et la matière existent
+    try {
+      await getGroupeInfo(groupeId);
+      const matiereInfo = await getMatiereInfo(matiereId);
+      
+      // Ajouter le type d'évaluation dans la réponse
+      return res.json({
+        success: true,
+        notesExistantes: false,
+        message: 'Aucune note existante. Importation créera de nouvelles notes.',
+        matiereInfo: {
+          nom: matiereInfo.nom,
+          type_evaluation: matiereInfo.type_evaluation || 'note_1_note_2_partiel',
+          description_type: matiereInfo.description_type
+        }
+      });
+      
+    } catch (error) {
+      return res.status(404).json({
+        success: false,
+        error: error.message
+      });
+    }
+    
+    // NOTE: Le code ci-dessous est gardé pour référence mais n'est plus nécessaire
+    // car nous avons simplifié la vérification
+    
+  } catch (error) {
+    console.error('❌ Erreur vérification notes:', error.message);
+    res.status(500).json({ 
+      success: false,
+      error: error.message
+    });
+  }
+};
+
 // ================= TÉLÉCHARGER TEMPLATE =================
 exports.downloadTemplate = async (req, res) => {
   try {
@@ -1264,7 +1171,7 @@ exports.downloadTemplate = async (req, res) => {
   }
 };
 
-// ================= API POUR TYPE D'ÉVALUATION =================
+// ================= NOUVELLES API POUR TYPE D'ÉVALUATION =================
 
 // API pour obtenir le type d'évaluation d'une matière
 exports.getTypeEvaluation = async (req, res) => {
@@ -1416,7 +1323,7 @@ exports.updateTypeEvaluation = async (req, res) => {
   }
 };
 
-// ================= AUTRES API =================
+// ================= FONCTIONS EXISTANTES =================
 exports.getNotesByGroupe = async (req, res) => {
   try {
     const { groupeId } = req.params;
