@@ -54,6 +54,7 @@ router.get('/check-existing/:groupeId/:matiereId', notesController.checkExisting
 router.get('/type-evaluation/:matiereId', notesController.getTypeEvaluation);
 router.put('/type-evaluation/:matiereId', notesController.updateTypeEvaluation);
 
+
 // Route de debug pour vérifier
 router.get('/debug-exports', (req, res) => {
   res.json({

@@ -96,6 +96,7 @@ const apiRoutes = [
   { path: "/api/Certificat_Scolarite", route: require('./routes/Certificat_scolarite.routes') },
   { path: "/api/certificats-frequentation", route: require('./routes/Certificat_frequentation.routes') },
   { path: "/api/notes", route: require('./routes/notes.routes') },
+  { path: "/api/professeur", route: require('./routes/professeur.routes')},
 
 ];
 
