@@ -388,6 +388,8 @@ if (req.files?.photo?.[0]) {
 exports.getEtudiantsByDepartement = async (req, res) => {
   try {
     const departementId = req.query.departement_id || req.user?.departement_id;
+    const { anneeAcademiqueId } = req.query;
+    const searchTerm = req.query.search || '';
     
     if (!departementId) {
       return res.status(400).json({
@@ -397,24 +399,78 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       });
     }
 
+    // Validation de l'année académique
+    if (!anneeAcademiqueId) {
+      return res.status(400).json({
+        success: false,
+        message: "L'ID de l'année académique est requis",
+        code: "ACADEMIC_YEAR_REQUIRED"
+      });
+    }
+
+    // Vérifier que l'année académique existe
+    const yearCheck = await db.query(
+      `SELECT id, annee, etat FROM anneeacademique WHERE id = $1`,
+      [anneeAcademiqueId]
+    );
+
+    if (yearCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Année académique non trouvée",
+        code: "ACADEMIC_YEAR_NOT_FOUND"
+      });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    let whereClauses = ['e.departement_id = $1', 'e.standing = $2'];
-    const params = [departementId, 'Inscrit'];
+    // Construction dynamique de la clause WHERE
+    let whereClauses = ['e.departement_id = $1', 'e.annee_academique_id = $2'];
+    let params = [departementId, anneeAcademiqueId];
+    let paramCounter = 3;
 
+    // Filtre par standing (par défaut 'Inscrit')
+    const standingFilter = req.query.standing || 'Inscrit';
+    whereClauses.push(`e.standing = $${paramCounter}`);
+    params.push(standingFilter);
+    paramCounter++;
+
+    // Filtre par filière si fourni
     if (req.query.filiere) {
-      whereClauses.push('f.nom = $' + (params.length + 1));
+      whereClauses.push(`f.nom = $${paramCounter}`);
       params.push(req.query.filiere);
+      paramCounter++;
     }
+    
+    // Filtre par niveau si fourni
     if (req.query.niveau) {
-      whereClauses.push('n.libelle = $' + (params.length + 1));
+      whereClauses.push(`n.libelle = $${paramCounter}`);
       params.push(req.query.niveau);
+      paramCounter++;
+    }
+
+    // Recherche textuelle si fournie
+    if (searchTerm) {
+      whereClauses.push(`(
+        e.nom ILIKE $${paramCounter} OR 
+        e.prenoms ILIKE $${paramCounter} OR 
+        e.matricule ILIKE $${paramCounter} OR 
+        e.code_unique ILIKE $${paramCounter} OR 
+        e.matricule_iipea ILIKE $${paramCounter} OR 
+        f.nom ILIKE $${paramCounter} OR 
+        f.sigle ILIKE $${paramCounter} OR 
+        e.telephone ILIKE $${paramCounter} OR 
+        e.nationalite ILIKE $${paramCounter}
+      )`);
+      params.push(`%${searchTerm}%`);
+      paramCounter++;
     }
 
     const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
 
+    // Requête principale avec toutes les jointures
     const dataQuery = `
       SELECT 
         e.id,
@@ -450,6 +506,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         n.libelle as niveau,
 
         a.annee as annee_academique,
+        a.etat as etat_annee,
 
         d.nom as departement,
 
@@ -460,8 +517,10 @@ exports.getEtudiantsByDepartement = async (req, res) => {
         doc.justificatif_identite,
         doc.dernier_diplome,
         doc.fiche_orientation,
+        
         -- Informations de groupe
         g.nom as groupe_nom,
+        
         -- Informations de scolarité
         s.montant_scolarite,
         s.scolarite_verse,
@@ -486,21 +545,25 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       LEFT JOIN curcus c ON e.curcus_id = c.id
       ${whereClause}
       ORDER BY e.nom ASC, e.prenoms ASC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      LIMIT $${paramCounter} OFFSET $${paramCounter + 1}
     `;
     
+    // Requête de comptage
     const countQuery = `
       SELECT COUNT(*) 
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
+      JOIN anneeacademique a ON e.annee_academique_id = a.id
       LEFT JOIN scolarite s ON e.scolarite_id = s.id
-      LEFT JOIN groupe g ON e.groupe_id = g.id  -- Jointure ajoutée aussi dans le count
+      LEFT JOIN groupe g ON e.groupe_id = g.id
       ${whereClause}
     `;
 
+    // Paramètres pour la pagination
     const queryParams = [...params, limit, offset];
 
+    // Exécution des requêtes en parallèle
     const [dataResult, countResult] = await Promise.all([
       db.query(dataQuery, queryParams),
       db.query(countQuery, params)
@@ -511,11 +574,16 @@ exports.getEtudiantsByDepartement = async (req, res) => {
       data: dataResult.rows,
       total: parseInt(countResult.rows[0].count, 10),
       page,
-      limit
+      limit,
+      anneeAcademique: {
+        id: anneeAcademiqueId,
+        annee: yearCheck.rows[0].annee,
+        etat: yearCheck.rows[0].etat
+      }
     });
 
   } catch (err) {
-    console.error("Erreur récupération étudiants en attente:", err);
+    console.error("Erreur récupération étudiants:", err);
     return res.status(500).json({
       success: false,
       error: "Erreur serveur",
@@ -529,6 +597,7 @@ exports.getEtudiantsByDepartement = async (req, res) => {
 exports.getEtudiantsByDepartementEnAttente = async (req, res) => {
   try {
     const departementId = req.query.departement_id || req.user?.departement_id;
+    const { anneeAcademiqueId } = req.query;
     
     if (!departementId) {
       return res.status(400).json({
@@ -538,19 +607,58 @@ exports.getEtudiantsByDepartementEnAttente = async (req, res) => {
       });
     }
 
+    // Validation de l'année académique
+    if (!anneeAcademiqueId) {
+      return res.status(400).json({
+        success: false,
+        message: "L'ID de l'année académique est requis",
+        code: "ACADEMIC_YEAR_REQUIRED"
+      });
+    }
+
+    // Vérifier que l'année académique existe
+    const yearCheck = await db.query(
+      `SELECT id, annee, etat FROM anneeacademique WHERE id = $1`,
+      [anneeAcademiqueId]
+    );
+
+    if (yearCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Année académique non trouvée",
+        code: "ACADEMIC_YEAR_NOT_FOUND"
+      });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    let whereClauses = ['e.departement_id = $1', 'e.standing = $2'];
-    const params = [departementId, 'en attente'];
+    // Construction dynamique de la clause WHERE
+    let whereClauses = ['e.departement_id = $1', 'e.standing = $2', 'e.annee_academique_id = $3'];
+    const params = [departementId, 'en attente', anneeAcademiqueId];
+
+    // Ajouter le paramètre de recherche si fourni
+    if (req.query.search) {
+      const searchTerm = `%${req.query.search}%`;
+      whereClauses.push(`
+        (e.nom ILIKE $${params.length + 1} OR 
+         e.prenoms ILIKE $${params.length + 1} OR 
+         e.matricule ILIKE $${params.length + 1} OR 
+         e.code_unique ILIKE $${params.length + 1} OR 
+         e.matricule_iipea ILIKE $${params.length + 1} OR 
+         f.nom ILIKE $${params.length + 1} OR 
+         f.sigle ILIKE $${params.length + 1})
+      `);
+      params.push(searchTerm);
+    }
 
     if (req.query.filiere) {
-      whereClauses.push('f.nom = $' + (params.length + 1));
+      whereClauses.push(`f.nom = $${params.length + 1}`);
       params.push(req.query.filiere);
     }
     if (req.query.niveau) {
-      whereClauses.push('n.libelle = $' + (params.length + 1));
+      whereClauses.push(`n.libelle = $${params.length + 1}`);
       params.push(req.query.niveau);
     }
 
@@ -590,6 +698,7 @@ exports.getEtudiantsByDepartementEnAttente = async (req, res) => {
         f.sigle as filiere_sigle,
         n.libelle as niveau,
         a.annee as annee_academique,
+        a.etat as etat_annee,
         d.nom as departement,
         doc.extrait_naissance,
         doc.justificatif_identite,
@@ -602,14 +711,16 @@ exports.getEtudiantsByDepartementEnAttente = async (req, res) => {
       JOIN departement d ON e.departement_id = d.id
       LEFT JOIN document doc ON e.document_id = doc.id
       ${whereClause}
-      ORDER BY e.nom ASC, e.prenoms ASC
+      ORDER BY e.date_inscription DESC, e.nom ASC, e.prenoms ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
+    
     const countQuery = `
       SELECT COUNT(*) 
       FROM etudiant e
       JOIN filiere f ON e.id_filiere = f.id
       JOIN niveau n ON e.niveau_id = n.id
+      JOIN anneeacademique a ON e.annee_academique_id = a.id
       ${whereClause}
     `;
 
@@ -625,7 +736,12 @@ exports.getEtudiantsByDepartementEnAttente = async (req, res) => {
       data: dataResult.rows,
       total: parseInt(countResult.rows[0].count, 10),
       page,
-      limit
+      limit,
+      anneeAcademique: {
+        id: anneeAcademiqueId,
+        annee: yearCheck.rows[0].annee,
+        etat: yearCheck.rows[0].etat
+      }
     });
 
   } catch (err) {
@@ -638,7 +754,6 @@ exports.getEtudiantsByDepartementEnAttente = async (req, res) => {
     });
   }
 };
-
 
 
 //==============================================================================================================//

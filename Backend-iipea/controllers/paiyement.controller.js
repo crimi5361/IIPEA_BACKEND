@@ -621,6 +621,7 @@ exports.getPaiementCountByEtudiant = async (req, res) => {
 exports.getPaiementsByDepartement = async (req, res) => {
   try {
     const departementId = req.query.departement_id || req.user?.departement_id;
+    const { anneeAcademiqueId } = req.query;
     
     if (!departementId) {
       return res.status(400).json({
@@ -630,28 +631,63 @@ exports.getPaiementsByDepartement = async (req, res) => {
       });
     }
 
+    // Validation de l'année académique
+    if (!anneeAcademiqueId) {
+      return res.status(400).json({
+        success: false,
+        message: "L'ID de l'année académique est requis",
+        code: "ACADEMIC_YEAR_REQUIRED"
+      });
+    }
+
+    // Vérifier que l'année académique existe
+    const yearCheck = await db.query(
+      `SELECT id, annee, etat FROM anneeacademique WHERE id = $1`,
+      [anneeAcademiqueId]
+    );
+
+    if (yearCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Année académique non trouvée",
+        code: "ACADEMIC_YEAR_NOT_FOUND"
+      });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    let whereClauses = ['d.id = $1'];
-    const params = [departementId];
+    // Construction dynamique de la clause WHERE
+    let whereClauses = ['d.id = $1', 'e.annee_academique_id = $2'];
+    const params = [departementId, anneeAcademiqueId];
 
-    // Filtres optionnels
+    // Ajouter le paramètre de recherche si fourni
+    if (req.query.search) {
+      const searchTerm = `%${req.query.search}%`;
+      whereClauses.push(`
+        (e.nom ILIKE $${params.length + 1} OR 
+         e.prenoms ILIKE $${params.length + 1} OR 
+         r.numero_recu ILIKE $${params.length + 1} OR 
+         u.nom ILIKE $${params.length + 1})
+      `);
+      params.push(searchTerm);
+    }
+
     if (req.query.filiere) {
-      whereClauses.push('f.nom = $' + (params.length + 1));
+      whereClauses.push(`f.nom = $${params.length + 1}`);
       params.push(req.query.filiere);
     }
     if (req.query.niveau) {
-      whereClauses.push('n.libelle = $' + (params.length + 1));
+      whereClauses.push(`n.libelle = $${params.length + 1}`);
       params.push(req.query.niveau);
     }
     if (req.query.date_debut) {
-      whereClauses.push('p.date_paiement >= $' + (params.length + 1));
+      whereClauses.push(`p.date_paiement >= $${params.length + 1}`);
       params.push(req.query.date_debut);
     }
     if (req.query.date_fin) {
-      whereClauses.push('p.date_paiement <= $' + (params.length + 1));
+      whereClauses.push(`p.date_paiement <= $${params.length + 1}`);
       params.push(req.query.date_fin);
     }
 
@@ -667,13 +703,16 @@ exports.getPaiementsByDepartement = async (req, res) => {
         r.date_emission,
         r.emetteur,
         e.nom as nom_etudiant,
-        e.prenoms,
+        e.prenoms as prenoms_etudiant,
         d.nom as nom_departement,
-        u.nom as nom_utilisateur_effectue_par
+        u.nom as nom_utilisateur_effectue_par,
+        a.annee as annee_academique,
+        a.etat as etat_annee
       FROM paiement p
       INNER JOIN recu r ON p.recu_id = r.id
       INNER JOIN etudiant e ON p.etudiant_id = e.id
       INNER JOIN departement d ON e.departement_id = d.id
+      INNER JOIN anneeacademique a ON e.annee_academique_id = a.id
       LEFT JOIN filiere f ON e.id_filiere = f.id
       LEFT JOIN niveau n ON e.niveau_id = n.id
       LEFT JOIN utilisateur u ON p.effectue_par::integer = u.id
@@ -688,6 +727,7 @@ exports.getPaiementsByDepartement = async (req, res) => {
       FROM paiement p
       INNER JOIN etudiant e ON p.etudiant_id = e.id
       INNER JOIN departement d ON e.departement_id = d.id
+      INNER JOIN anneeacademique a ON e.annee_academique_id = a.id
       LEFT JOIN filiere f ON e.id_filiere = f.id
       LEFT JOIN niveau n ON e.niveau_id = n.id
       ${whereClause}
@@ -709,9 +749,11 @@ exports.getPaiementsByDepartement = async (req, res) => {
       date_emission: row.date_emission,
       emetteur: row.emetteur,
       nom_etudiant: row.nom_etudiant,
-      prenoms_etudiant: row.prenoms,
+      prenoms_etudiant: row.prenoms_etudiant,
       nom_departement: row.nom_departement,
-      nom_utilisateur_effectue_par: row.nom_utilisateur_effectue_par
+      nom_utilisateur_effectue_par: row.nom_utilisateur_effectue_par,
+      annee_academique: row.annee_academique,
+      etat_annee: row.etat_annee
     }));
 
     return res.status(200).json({
@@ -720,7 +762,12 @@ exports.getPaiementsByDepartement = async (req, res) => {
       total: parseInt(countResult.rows[0].count, 10),
       page,
       limit,
-      total_pages: Math.ceil(parseInt(countResult.rows[0].count, 10) / limit)
+      total_pages: Math.ceil(parseInt(countResult.rows[0].count, 10) / limit),
+      anneeAcademique: {
+        id: anneeAcademiqueId,
+        annee: yearCheck.rows[0].annee,
+        etat: yearCheck.rows[0].etat
+      }
     });
 
   } catch (err) {

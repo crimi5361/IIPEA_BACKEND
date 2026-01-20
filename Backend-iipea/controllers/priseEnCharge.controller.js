@@ -37,6 +37,16 @@ exports.getPECEnAttente = async (req, res) => {
   const client = await db.connect();
   
   try {
+    const departementId = req.user.departement_id;
+    const { anneeAcademiqueId } = req.query;
+
+    if (!anneeAcademiqueId) {
+      return res.status(400).json({
+        success: false,
+        message: "L'ID de l'année académique est requis"
+      });
+    }
+
     const query = `
       SELECT 
         p.id as pec_id,
@@ -65,10 +75,12 @@ exports.getPECEnAttente = async (req, res) => {
       JOIN niveau n ON e.niveau_id = n.id
       JOIN scolarite s ON e.scolarite_id = s.id
       WHERE p.statut = 'en_attente'
+        AND e.annee_academique_id = $1
+        AND e.departement_id = $2
       ORDER BY p.date_demande DESC
     `;
 
-    const result = await client.query(query);
+    const result = await client.query(query, [anneeAcademiqueId, departementId]);
 
     res.status(200).json({
       success: true,
@@ -88,12 +100,21 @@ exports.getPECEnAttente = async (req, res) => {
 
 //===========================================================================================================================
 
-
 // Récupérer toutes les PEC traitées (validées ET refusées) avec les infos étudiant
 exports.getPECTraitees = async (req, res) => {
   const client = await db.connect();
   
   try {
+    const departementId = req.user.departement_id;
+    const { anneeAcademiqueId } = req.query;
+
+    if (!anneeAcademiqueId) {
+      return res.status(400).json({
+        success: false,
+        message: "L'ID de l'année académique est requis"
+      });
+    }
+
     const query = `
       SELECT 
         p.id as pec_id,
@@ -127,10 +148,12 @@ exports.getPECTraitees = async (req, res) => {
       JOIN niveau n ON e.niveau_id = n.id
       JOIN scolarite s ON e.scolarite_id = s.id
       WHERE p.statut IN ('valide', 'refuse')  
+        AND e.annee_academique_id = $1
+        AND e.departement_id = $2
       ORDER BY p.date_validation DESC, e.nom, e.prenoms
     `;
 
-    const result = await client.query(query);
+    const result = await client.query(query, [anneeAcademiqueId, departementId]);
 
     res.status(200).json({
       success: true,
@@ -147,27 +170,41 @@ exports.getPECTraitees = async (req, res) => {
     client.release();
   }
 };
+
 //==================== Récupérer les statistiques des PEC validées======================
 exports.getStatsPECtraitees = async (req, res) => {
   const client = await db.connect();
   
   try {
+    const departementId = req.user.departement_id;
+    const { anneeAcademiqueId } = req.query;
+
+    if (!anneeAcademiqueId) {
+      return res.status(400).json({
+        success: false,
+        message: "L'ID de l'année académique est requis"
+      });
+    }
+
     const query = `
       SELECT 
         COUNT(*) as total_pec_traitees,
-        COUNT(*) FILTER (WHERE statut = 'valide') as total_validees,
-        COUNT(*) FILTER (WHERE statut = 'refuse') as total_refusees,
-        COALESCE(SUM(montant_reduction), 0) as total_reduction,
-        COALESCE(AVG(montant_reduction), 0) as moyenne_reduction,
-        type_pec,
+        COUNT(*) FILTER (WHERE p.statut = 'valide') as total_validees,
+        COUNT(*) FILTER (WHERE p.statut = 'refuse') as total_refusees,
+        COALESCE(SUM(p.montant_reduction), 0) as total_reduction,
+        COALESCE(AVG(p.montant_reduction), 0) as moyenne_reduction,
+        p.type_pec,
         COUNT(*) as count_type
-      FROM prise_en_charge 
-      WHERE statut IN ('valide', 'refuse')
-      GROUP BY type_pec
+      FROM prise_en_charge p
+      JOIN etudiant e ON p.etudiant_id = e.id
+      WHERE p.statut IN ('valide', 'refuse')
+        AND e.annee_academique_id = $1
+        AND e.departement_id = $2
+      GROUP BY p.type_pec
       ORDER BY count_type DESC
     `;
 
-    const result = await client.query(query);
+    const result = await client.query(query, [anneeAcademiqueId, departementId]);
 
     res.status(200).json({
       success: true,
