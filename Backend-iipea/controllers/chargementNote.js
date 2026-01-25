@@ -1,4 +1,3 @@
-
 const multer = require('multer');
 const xlsx = require('xlsx');
 const path = require('path');
@@ -279,6 +278,64 @@ async function getMatiereInfo(matiereId) {
   }
 }
 
+// FONCTION CORRIGÉE : Récupérer ou mettre à jour un enseignement existant
+// Si un enseignement existe déjà pour cette matière, groupe et année, on le met à jour avec le nouveau professeur
+async function getOrUpdateEnseignement(professeurId, matiereId, groupeId, anneeAcademique) {
+  try {
+    console.log(`🎯 Recherche/mise à jour enseignement: matiere=${matiereId}, groupe=${groupeId}, année=${anneeAcademique}`);
+    
+    // Vérifier s'il existe déjà un enseignement pour cette matière, groupe et année académique
+    const findQuery = `
+      SELECT id, professeur_id, created_at 
+      FROM enseignement 
+      WHERE matiere_id = $1 AND groupe_id = $2 AND annee_academique = $3
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    
+    const existing = await db.query(findQuery, [matiereId, groupeId, anneeAcademique]);
+    
+    if (existing.rows.length > 0) {
+      const enseignement = existing.rows[0];
+      console.log(`  Enseignement existant trouvé: ${enseignement.id} (prof: ${enseignement.professeur_id})`);
+      
+      // Mettre à jour le professeur si différent
+      if (enseignement.professeur_id !== parseInt(professeurId)) {
+        console.log(`  Mise à jour du professeur: ${enseignement.professeur_id} -> ${professeurId}`);
+        const updateQuery = `
+          UPDATE enseignement 
+          SET professeur_id = $1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $2
+          RETURNING id
+        `;
+        
+        const updated = await db.query(updateQuery, [professeurId, enseignement.id]);
+        console.log(`✅ Enseignement mis à jour: ${updated.rows[0].id}`);
+        return updated.rows[0].id;
+      }
+      
+      console.log(`  Enseignement conservé: ${enseignement.id}`);
+      return enseignement.id;
+    }
+    
+    // Créer un nouvel enseignement seulement s'il n'en existe pas
+    console.log(`🆕 Création nouvel enseignement`);
+    const insertQuery = `
+      INSERT INTO enseignement (professeur_id, matiere_id, groupe_id, annee_academique, created_at)
+      VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+      RETURNING id
+    `;
+    
+    const newEnseignement = await db.query(insertQuery, [professeurId, matiereId, groupeId, anneeAcademique]);
+    
+    console.log(`✅ Nouvel enseignement créé: ${newEnseignement.rows[0].id}`);
+    return newEnseignement.rows[0].id;
+  } catch (error) {
+    console.error(`❌ Erreur création/mise à jour enseignement: ${error.message}`);
+    throw error;
+  }
+}
+
 // Fonction pour récupérer ou créer la session avec format "SESSION 1 2025-2026"
 async function getOrCreateSession(groupeId) {
   try {
@@ -305,20 +362,22 @@ async function getOrCreateSession(groupeId) {
       console.log(`📅 Année académique ID trouvée: ${anneeAcademiqueId}`);
     } else {
       console.log('⚠️ Aucune année académique trouvée pour le groupe');
-      // Chercher l'année académique par son nom
-      const anneeNomQuery = `SELECT id FROM annee_academique WHERE nom = $1`;
+      // Chercher l'année académique par son année (annee)
+      const anneeNomQuery = `SELECT id, annee FROM anneeacademique WHERE annee = $1`;
       const anneeNomResult = await db.query(anneeNomQuery, [anneeAcademique]);
       if (anneeNomResult.rows.length > 0) {
         anneeAcademiqueId = anneeNomResult.rows[0].id;
-        console.log(`📅 Année académique trouvée par nom: ${anneeAcademiqueId}`);
+        console.log(`📅 Année académique trouvée par annee: ${anneeAcademiqueId}`);
       }
     }
     
     // 2. Chercher une session existante pour cet année académique
     const findQuery = `
-      SELECT * FROM session 
-      WHERE annee_academique_id = $1 
-      ORDER BY id DESC 
+      SELECT s.*, a.annee as annee_academique_nom
+      FROM session s
+      JOIN anneeacademique a ON s.annee_academique_id = a.id
+      WHERE s.annee_academique_id = $1 
+      ORDER BY s.id DESC 
       LIMIT 1
     `;
     
@@ -326,26 +385,45 @@ async function getOrCreateSession(groupeId) {
     if (anneeAcademiqueId) {
       sessionResult = await db.query(findQuery, [anneeAcademiqueId]);
     } else {
-      // Fallback: chercher par nom
-      const fallbackQuery = `SELECT * FROM session WHERE nom LIKE $1 ORDER BY id DESC LIMIT 1`;
+      // Fallback: chercher par nom d'année
+      const fallbackQuery = `
+        SELECT s.*, a.annee as annee_academique_nom
+        FROM session s
+        JOIN anneeacademique a ON s.annee_academique_id = a.id
+        WHERE a.annee LIKE $1 
+        ORDER BY s.id DESC 
+        LIMIT 1
+      `;
       sessionResult = await db.query(fallbackQuery, [`%${anneeAcademique}%`]);
     }
     
     if (sessionResult.rows.length > 0) {
       console.log(`  Session existante trouvée: ${sessionResult.rows[0].nom}`);
-      return sessionResult.rows[0];
+      return {
+        session: sessionResult.rows[0],
+        anneeAcademique: sessionResult.rows[0].annee_academique_nom
+      };
     }
     
     // 3. Créer une nouvelle session avec format "SESSION 1 2025-2026"
     console.log(`🔄 Création nouvelle session pour ${anneeAcademique}`);
     
-    // Compter combien de sessions existent pour cette année
-    let sessionNumero = 1;
-    if (anneeAcademiqueId) {
-      const countQuery = `SELECT COUNT(*) as count FROM session WHERE annee_academique_id = $1`;
-      const countResult = await db.query(countQuery, [anneeAcademiqueId]);
-      sessionNumero = parseInt(countResult.rows[0].count) + 1;
+    // Si pas d'année académique ID, on doit d'abord créer l'année académique
+    if (!anneeAcademiqueId) {
+      const createAnneeQuery = `
+        INSERT INTO anneeacademique (annee, etat)
+        VALUES ($1, 'Actif')
+        RETURNING id
+      `;
+      const anneeResult = await db.query(createAnneeQuery, [anneeAcademique]);
+      anneeAcademiqueId = anneeResult.rows[0].id;
+      console.log(`  Nouvelle année académique créée: ${anneeAcademiqueId}`);
     }
+    
+    // Compter combien de sessions existent pour cette année
+    const countQuery = `SELECT COUNT(*) as count FROM session WHERE annee_academique_id = $1`;
+    const countResult = await db.query(countQuery, [anneeAcademiqueId]);
+    const sessionNumero = parseInt(countResult.rows[0].count) + 1;
     
     const sessionNom = `SESSION ${sessionNumero} ${anneeAcademique}`;
     
@@ -356,9 +434,18 @@ async function getOrCreateSession(groupeId) {
     `;
     
     const newSession = await db.query(createQuery, [sessionNom, anneeAcademiqueId]);
+    
+    // Récupérer l'année académique pour le retour
+    const anneeQueryFinal = `SELECT annee FROM anneeacademique WHERE id = $1`;
+    const anneeResultFinal = await db.query(anneeQueryFinal, [anneeAcademiqueId]);
+    const anneeAcademiqueNom = anneeResultFinal.rows[0].annee;
+    
     console.log(`  Nouvelle session créée: ${newSession.rows[0].nom} (ID: ${newSession.rows[0].id})`);
     
-    return newSession.rows[0];
+    return {
+      session: { ...newSession.rows[0], annee_academique_nom: anneeAcademiqueNom },
+      anneeAcademique: anneeAcademiqueNom
+    };
   } catch (error) {
     console.error(`❌ Erreur session: ${error.message}`);
     throw new Error(`Erreur session: ${error.message}`);
@@ -708,10 +795,11 @@ function calculerMoyenne(note1, note2, partiel, matiereInfo) {
   }
 }
 
-async function checkExistingNote(etudiantId, matiereId, sessionId) {
+// Vérifier si une note existe déjà pour un étudiant dans un enseignement donné
+async function checkExistingNote(etudiantId, enseignementId, sessionId) {
   try {
-    const query = `SELECT id FROM note WHERE etudiant_id = $1 AND matiere_id = $2 AND session_id = $3 LIMIT 1`;
-    const result = await db.query(query, [etudiantId, matiereId, sessionId]);
+    const query = `SELECT id FROM note WHERE etudiant_id = $1 AND enseignement_id = $2 AND session_id = $3 LIMIT 1`;
+    const result = await db.query(query, [etudiantId, enseignementId, sessionId]);
     
     return result.rows.length > 0 ? result.rows[0].id : null;
   } catch (error) {
@@ -720,6 +808,7 @@ async function checkExistingNote(etudiantId, matiereId, sessionId) {
   }
 }
 
+// Insérer ou mettre à jour une note
 async function upsertNote(noteData, fichierSource, noteId = null) {
   try {
     if (noteId) {
@@ -741,7 +830,7 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
       const insertQuery = `
         INSERT INTO note (
           note1, note2, partiel, moyenne,
-          matiere_id, etudiant_id, session_id, semestre_id,
+          enseignement_id, etudiant_id, session_id, semestre_id,
           coefficient, fichier_source, created_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
         RETURNING id
@@ -749,7 +838,7 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
       
       const result = await db.query(insertQuery, [
         noteData.note1, noteData.note2, noteData.partiel, noteData.moyenne,
-        noteData.matiereId, noteData.etudiantId, noteData.sessionId, noteData.semestreId,
+        noteData.enseignementId, noteData.etudiantId, noteData.sessionId, noteData.semestreId,
         noteData.coefficient, fichierSource
       ]);
       
@@ -793,12 +882,13 @@ function getEvaluationDescription(type) {
   return descriptions[type] || type;
 }
 
-// ================= API checkExistingNotes CORRIGÉE =================
+// ================= API checkExistingNotes AVEC ENSEIGNEMENT =================
 exports.checkExistingNotes = async (req, res) => {
   try {
     const { groupeId, matiereId } = req.params;
+    const { professeurId } = req.query;
     
-    console.log('🔍 Vérification notes existantes:', { groupeId, matiereId });
+    console.log('🔍 Vérification notes existantes:', { groupeId, matiereId, professeurId });
     
     if (!groupeId || !matiereId) {
       return res.status(400).json({
@@ -833,52 +923,133 @@ exports.checkExistingNotes = async (req, res) => {
     const etudiantsQuery = `
       SELECT COUNT(*) as total 
       FROM etudiant 
-      WHERE groupe_id = $1 AND  standing = 'Inscrit'
+      WHERE groupe_id = $1 AND standing = 'Inscrit'
     `;
     const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
     const totalEtudiants = parseInt(etudiantsResult.rows[0].total) || 0;
     
-    // 2. Vérifier les notes existantes pour cette matière dans ce groupe
-    // Récupérer la session la plus récente
-    const sessionQuery = `
-      SELECT s.id, s.nom, a.annee
-      FROM session s
-      JOIN anneeacademique a ON s.annee_academique_id = a.id
-      ORDER BY a.annee DESC, s.id DESC
-      LIMIT 1
-    `;
-    const sessionResult = await db.query(sessionQuery);
-    const sessionId = sessionResult.rows[0]?.id;
-    
+    // 2. Chercher l'enseignement correspondant
+    let enseignementId = null;
     let notesExistantes = false;
     let etudiantsAvecNotes = 0;
     let totalNotes = 0;
     let derniereImportation = null;
     let dernierFichier = null;
     
-    if (sessionId) {
-      const notesQuery = `
-        SELECT 
-          COUNT(DISTINCT n.etudiant_id) as etudiantsAvecNotes,
-          COUNT(n.id) as totalNotes,
-          MAX(n.created_at) as derniereImportation,
-          MAX(n.fichier_source) as dernierFichier
-        FROM note n
-        INNER JOIN etudiant e ON n.etudiant_id = e.id
-        WHERE e.groupe_id = $1 
-          AND n.matiere_id = $2
-          AND n.session_id = $3
-          AND (n.note1 IS NOT NULL OR n.note2 IS NOT NULL OR n.partiel IS NOT NULL)
+    if (professeurId) {
+      // Chercher l'enseignement spécifique pour l'année académique courante
+      const currentYear = new Date().getFullYear();
+      const nextYear = currentYear + 1;
+      const anneeAcademique = `${currentYear}-${nextYear}`;
+      
+      const enseignementQuery = `
+        SELECT id, annee_academique FROM enseignement 
+        WHERE professeur_id = $1 AND matiere_id = $2 AND groupe_id = $3 AND annee_academique = $4
+        LIMIT 1
       `;
       
-      const notesResult = await db.query(notesQuery, [groupeId, matiereId, sessionId]);
+      const enseignementResult = await db.query(enseignementQuery, [professeurId, matiereId, groupeId, anneeAcademique]);
       
-      if (notesResult.rows.length > 0) {
-        etudiantsAvecNotes = parseInt(notesResult.rows[0].etudiantsavecnotes) || 0;
-        totalNotes = parseInt(notesResult.rows[0].totalnotes) || 0;
-        derniereImportation = notesResult.rows[0].derniereimportation;
-        dernierFichier = notesResult.rows[0].dernierfichier;
-        notesExistantes = etudiantsAvecNotes > 0;
+      if (enseignementResult.rows.length > 0) {
+        enseignementId = enseignementResult.rows[0].id;
+        const anneeEnseignement = enseignementResult.rows[0].annee_academique;
+        console.log(`  Enseignement trouvé: ${enseignementId} (année: ${anneeEnseignement})`);
+        
+        // Vérifier les notes existantes pour cet enseignement
+        // Chercher la session pour cette année académique
+        const sessionQuery = `
+          SELECT s.id, s.nom, a.annee
+          FROM session s
+          JOIN anneeacademique a ON s.annee_academique_id = a.id
+          WHERE a.annee = $1
+          ORDER BY s.id DESC
+          LIMIT 1
+        `;
+        const sessionResult = await db.query(sessionQuery, [anneeEnseignement]);
+        const sessionId = sessionResult.rows[0]?.id;
+        
+        if (sessionId) {
+          const notesQuery = `
+            SELECT 
+              COUNT(DISTINCT n.etudiant_id) as etudiantsAvecNotes,
+              COUNT(n.id) as totalNotes,
+              MAX(n.created_at) as derniereImportation,
+              MAX(n.fichier_source) as dernierFichier
+            FROM note n
+            INNER JOIN etudiant e ON n.etudiant_id = e.id
+            WHERE e.groupe_id = $1 
+              AND n.enseignement_id = $2
+              AND n.session_id = $3
+              AND (n.note1 IS NOT NULL OR n.note2 IS NOT NULL OR n.partiel IS NOT NULL)
+          `;
+          
+          const notesResult = await db.query(notesQuery, [groupeId, enseignementId, sessionId]);
+          
+          if (notesResult.rows.length > 0) {
+            etudiantsAvecNotes = parseInt(notesResult.rows[0].etudiantsavecnotes) || 0;
+            totalNotes = parseInt(notesResult.rows[0].totalnotes) || 0;
+            derniereImportation = notesResult.rows[0].derniereimportation;
+            dernierFichier = notesResult.rows[0].dernierfichier;
+            notesExistantes = etudiantsAvecNotes > 0;
+          }
+        }
+      }
+    } else {
+      // Sans professeurId, chercher l'enseignement le plus récent pour cette matière et groupe
+      const enseignementsQuery = `
+        SELECT e.id as enseignement_id, e.annee_academique, p.nom as professeur_nom, p.prenom as professeur_prenom
+        FROM enseignement e
+        LEFT JOIN professeur p ON e.professeur_id = p.id
+        WHERE e.matiere_id = $1 AND e.groupe_id = $2
+        ORDER BY e.annee_academique DESC, e.created_at DESC
+        LIMIT 1
+      `;
+      
+      const enseignementsResult = await db.query(enseignementsQuery, [matiereId, groupeId]);
+      
+      if (enseignementsResult.rows.length > 0) {
+        enseignementId = enseignementsResult.rows[0].enseignement_id;
+        const anneeEnseignement = enseignementsResult.rows[0].annee_academique;
+        console.log(`  Enseignement trouvé (sans prof): ${enseignementId} (année: ${anneeEnseignement})`);
+        
+        // Vérifier les notes existantes pour cet enseignement
+        // Chercher la session pour cette année académique
+        const sessionQuery = `
+          SELECT s.id, s.nom, a.annee
+          FROM session s
+          JOIN anneeacademique a ON s.annee_academique_id = a.id
+          WHERE a.annee = $1
+          ORDER BY s.id DESC
+          LIMIT 1
+        `;
+        const sessionResult = await db.query(sessionQuery, [anneeEnseignement]);
+        const sessionId = sessionResult.rows[0]?.id;
+        
+        if (sessionId) {
+          const notesQuery = `
+            SELECT 
+              COUNT(DISTINCT n.etudiant_id) as etudiantsAvecNotes,
+              COUNT(n.id) as totalNotes,
+              MAX(n.created_at) as derniereImportation,
+              MAX(n.fichier_source) as dernierFichier
+            FROM note n
+            INNER JOIN etudiant e ON n.etudiant_id = e.id
+            WHERE e.groupe_id = $1 
+              AND n.enseignement_id = $2
+              AND n.session_id = $3
+              AND (n.note1 IS NOT NULL OR n.note2 IS NOT NULL OR n.partiel IS NOT NULL)
+          `;
+          
+          const notesResult = await db.query(notesQuery, [groupeId, enseignementId, sessionId]);
+          
+          if (notesResult.rows.length > 0) {
+            etudiantsAvecNotes = parseInt(notesResult.rows[0].etudiantsavecnotes) || 0;
+            totalNotes = parseInt(notesResult.rows[0].totalnotes) || 0;
+            derniereImportation = notesResult.rows[0].derniereimportation;
+            dernierFichier = notesResult.rows[0].dernierfichier;
+            notesExistantes = etudiantsAvecNotes > 0;
+          }
+        }
       }
     }
     
@@ -906,6 +1077,7 @@ exports.checkExistingNotes = async (req, res) => {
       derniereImportation,
       dernierFichier,
       message,
+      enseignementId: enseignementId,
       matiereInfo: {
         nom: matiereResult.rows[0].nom,
         type_evaluation: matiereResult.rows[0].type_evaluation || 'note_1_note_2_partiel',
@@ -922,17 +1094,17 @@ exports.checkExistingNotes = async (req, res) => {
   }
 };
 
-// ================= CONTROLLER PRINCIPAL =================
+// ================= CONTROLLER PRINCIPAL AVEC ENSEIGNEMENT (CORRIGÉ) =================
 exports.uploadNotes = async (req, res) => {
   console.log('\n' + '='.repeat(80));
-  console.log('🚀 DÉBUT TRAITEMENT UPLOAD NOTES');
+  console.log('🚀 DÉBUT TRAITEMENT UPLOAD NOTES AVEC ENSEIGNEMENT');
   console.log('='.repeat(80));
   
   let uploadedFile = null;
   let fileSaved = false;
   
   try {
-    const { groupeId, matiereId, noteTypes } = req.body;
+    const { groupeId, matiereId, noteTypes, professeurId } = req.body;
     
     if (!groupeId || !matiereId || !noteTypes) {
       throw new Error('groupeId, matiereId et noteTypes sont requis');
@@ -945,13 +1117,18 @@ exports.uploadNotes = async (req, res) => {
     uploadedFile = req.file;
     
     console.log(`📂 Fichier uploadé: ${uploadedFile.originalname} (${uploadedFile.size} bytes)`);
-    console.log(`📋 Paramètres: groupeId=${groupeId}, matiereId=${matiereId}, noteTypes=${noteTypes}`);
+    console.log(`📋 Paramètres: groupeId=${groupeId}, matiereId=${matiereId}, noteTypes=${noteTypes}, professeurId=${professeurId}`);
     
     let parsedNoteTypes;
     try {
       parsedNoteTypes = JSON.parse(noteTypes);
     } catch (parseError) {
       parsedNoteTypes = [noteTypes];
+    }
+    
+    // Vérifier si un professeur est spécifié
+    if (!professeurId) {
+      throw new Error('Un professeur doit être sélectionné pour créer l\'enseignement');
     }
     
     // ================= ÉTAPE 1: DÉTERMINER LE TYPE D'ÉVALUATION =================
@@ -964,24 +1141,38 @@ exports.uploadNotes = async (req, res) => {
     
     // ================= ÉTAPE 3: RÉCUPÉRER LES INFORMATIONS =================
     const groupeInfo = await getGroupeInfo(groupeId);
-    const matiereInfo = await getMatiereInfo(matiereId); // Cette fonction utilisera le nouveau type
-    const session = await getOrCreateSession(groupeId);
+    const matiereInfo = await getMatiereInfo(matiereId);
+    const sessionInfo = await getOrCreateSession(groupeId);
+    const session = sessionInfo.session;
+    const anneeAcademique = sessionInfo.anneeAcademique;
     const etudiants = await getEtudiantsDuGroupe(groupeId);
     
     console.log('\n  Informations récupérées:');
     console.log(`   Groupe: ${groupeInfo.nom} (ID: ${groupeInfo.id})`);
     console.log(`   Matière: ${matiereInfo.nom} (ID: ${matiereInfo.id})`);
-    console.log(`   Type d'évaluation (avant): ${matiereInfo.type_evaluation || 'note_1_note_2_partiel'}`);
-    console.log(`   Type d'évaluation (après): ${nouveauTypeEvaluation}`);
+    console.log(`   Type d'évaluation: ${nouveauTypeEvaluation}`);
     console.log(`   Session: ${session.nom} (ID: ${session.id})`);
+    console.log(`   Année académique: ${anneeAcademique}`);
+    console.log(`   Professeur ID: ${professeurId}`);
     console.log(`   Étudiants dans le groupe: ${etudiants.length}`);
     
-    // ================= ÉTAPE 4: PARSER LE FICHIER =================
+    // ================= ÉTAPE 4 CRITIQUE: CRÉER OU METTRE À JOUR L'ENSEIGNEMENT =================
+    // MODIFICATION IMPORTANTE: Utiliser getOrUpdateEnseignement au lieu de getOrCreateEnseignement
+    const enseignementId = await getOrUpdateEnseignement(
+      professeurId, 
+      matiereId, 
+      groupeId, 
+      anneeAcademique
+    );
+    
+    console.log(`🎓 Enseignement ID: ${enseignementId}`);
+    
+    // ================= ÉTAPE 5: PARSER LE FICHIER =================
     const studentsData = parseExcelFile(uploadedFile.path, parsedNoteTypes);
     
     console.log(`\n  ${studentsData.length} étudiants trouvés dans le fichier Excel`);
     
-    // ================= ÉTAPE 5: TRAITER LES NOTES =================
+    // ================= ÉTAPE 6: TRAITER LES NOTES =================
     const results = {
       processedCount: 0,
       inserted: 0,
@@ -1024,7 +1215,7 @@ exports.uploadNotes = async (req, res) => {
         
         const existingNoteId = await checkExistingNote(
           etudiant.id,
-          matiereInfo.id,
+          enseignementId,
           session.id
         );
         
@@ -1033,7 +1224,7 @@ exports.uploadNotes = async (req, res) => {
           note2: noteValues.note2,
           partiel: noteValues.partiel,
           moyenne: moyenne,
-          matiereId: matiereInfo.id,
+          enseignementId: enseignementId,
           etudiantId: etudiant.id,
           sessionId: session.id,
           semestreId: matiereInfo.semestre_id,
@@ -1068,7 +1259,7 @@ exports.uploadNotes = async (req, res) => {
       }
     }
     
-    // ================= ÉTAPE 6: RÉSULTAT FINAL =================
+    // ================= ÉTAPE 7: RÉSULTAT FINAL =================
     const hasErrors = results.errors.length > 0;
     const noStudentsFound = results.etudiantsNonTrouves.length === studentsData.length;
     const success = results.processedCount > 0 && !hasErrors;
@@ -1081,12 +1272,27 @@ exports.uploadNotes = async (req, res) => {
     console.log(`   Notes mises à jour: ${results.updated}`);
     console.log(`   Étudiants non trouvés: ${results.etudiantsNonTrouves.length}`);
     console.log(`   Erreurs: ${results.errors.length}`);
-    console.log(`   Type d'évaluation mis à jour: ${nouveauTypeEvaluation}`);
+    console.log(`   Type d'évaluation: ${nouveauTypeEvaluation}`);
+    console.log(`   Enseignement ID: ${enseignementId}`);
     console.log(`   Succès: ${success ? '  OUI' : '❌ NON'}`);
     
     if (success) {
       fileSaved = true;
       console.log('💾 Fichier conservé dans:', uploadedFile.path);
+      
+      // Récupérer le nom du professeur
+      let professeurNom = 'Professeur inconnu';
+      if (professeurId) {
+        try {
+          const profQuery = 'SELECT nom, prenom FROM professeur WHERE id = $1';
+          const profResult = await db.query(profQuery, [professeurId]);
+          if (profResult.rows.length > 0) {
+            professeurNom = `${profResult.rows[0].prenom} ${profResult.rows[0].nom}`;
+          }
+        } catch (error) {
+          console.error('Erreur récupération nom professeur:', error.message);
+        }
+      }
       
       const response = {
         success: true,
@@ -1099,6 +1305,8 @@ exports.uploadNotes = async (req, res) => {
           matiere: matiereInfo.nom,
           groupe: groupeInfo.nom,
           session: session.nom,
+          professeur: professeurNom,
+          enseignementId: enseignementId,
           type_evaluation: nouveauTypeEvaluation,
           description_type: matiereInfo.description_type || getDescriptionTypeEvaluation(nouveauTypeEvaluation),
           stats: {
@@ -1186,7 +1394,7 @@ exports.uploadNotes = async (req, res) => {
       success: false,
       error: 'Erreur lors de l\'importation',
       details: error.message,
-      suggestion: 'Vérifiez que: 1) Le fichier Excel est valide, 2) La colonne "Code" correspond exactement au matricule_iipea, 3) Le groupe et la matière existent',
+      suggestion: 'Vérifiez que: 1) Le fichier Excel est valide, 2) La colonne "Code" correspond exactement au matricule_iipea, 3) Le groupe et la matière existent, 4) Un professeur est sélectionné',
       timestamp: new Date().toISOString(),
       debug: process.env.NODE_ENV === 'development' ? {
         stack: error.stack,
@@ -1421,9 +1629,17 @@ exports.getNotesByGroupe = async (req, res) => {
   try {
     const { groupeId } = req.params;
     const query = `
-      SELECT n.*, e.nom, e.prenoms, e.matricule_iipea
+      SELECT 
+        n.*, 
+        e.nom, e.prenoms, e.matricule_iipea,
+        ens.id as enseignement_id,
+        p.nom as professeur_nom, p.prenom as professeur_prenom,
+        m.nom as matiere_nom
       FROM note n
       INNER JOIN etudiant e ON n.etudiant_id = e.id
+      INNER JOIN enseignement ens ON n.enseignement_id = ens.id
+      INNER JOIN matiere m ON ens.matiere_id = m.id
+      LEFT JOIN professeur p ON ens.professeur_id = p.id
       WHERE e.groupe_id = $1
       ORDER BY e.nom, e.prenoms
     `;
@@ -1446,7 +1662,7 @@ exports.getUploadStatus = async (req, res) => {
       SELECT 
         COUNT(*) as total_uploads,
         MAX(created_at) as last_upload,
-        COUNT(DISTINCT matiere_id) as matieres_differentes,
+        COUNT(DISTINCT enseignement_id) as enseignements_differents,
         COUNT(DISTINCT session_id) as sessions_differentes
       FROM note
     `;
@@ -1482,14 +1698,18 @@ exports.getGroupeDetails = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Groupe non trouvé' });
     }
     
-    // Récupérer les matières du groupe (via les notes)
+    // Récupérer les matières du groupe (via les enseignements)
     const matieresQuery = `
-      SELECT DISTINCT m.id, m.nom, m.code, m.type_evaluation, COUNT(n.id) as nombre_notes
-      FROM note n
-      INNER JOIN matiere m ON n.matiere_id = m.id
-      INNER JOIN etudiant e ON n.etudiant_id = e.id
+      SELECT DISTINCT 
+        m.id, m.nom, m.code, m.type_evaluation,
+        p.nom as professeur_nom, p.prenom as professeur_prenom,
+        COUNT(n.id) as nombre_notes
+      FROM enseignement e
+      INNER JOIN matiere m ON e.matiere_id = m.id
+      LEFT JOIN professeur p ON e.professeur_id = p.id
+      LEFT JOIN note n ON e.id = n.enseignement_id
       WHERE e.groupe_id = $1
-      GROUP BY m.id, m.nom, m.code, m.type_evaluation
+      GROUP BY m.id, m.nom, m.code, m.type_evaluation, p.nom, p.prenom
     `;
     
     const matieresResult = await db.query(matieresQuery, [groupeId]);
@@ -1564,6 +1784,41 @@ exports.validateExcelFile = async (req, res) => {
       success: false, 
       error: 'Erreur lors de la validation du fichier' 
     });
+  }
+};
+
+// ================= API POUR ENSEIGNEMENT =================
+exports.getEnseignementsByGroupe = async (req, res) => {
+  try {
+    const { groupeId } = req.params;
+    
+    const query = `
+      SELECT 
+        e.id as enseignement_id,
+        e.annee_academique,
+        m.id as matiere_id,
+        m.nom as matiere_nom,
+        m.coefficient,
+        p.id as professeur_id,
+        p.nom as professeur_nom,
+        p.prenom as professeur_prenom
+      FROM enseignement e
+      INNER JOIN matiere m ON e.matiere_id = m.id
+      LEFT JOIN professeur p ON e.professeur_id = p.id
+      WHERE e.groupe_id = $1
+      ORDER BY m.nom
+    `;
+    
+    const result = await db.query(query, [groupeId]);
+    
+    res.json({
+      success: true,
+      count: result.rows.length,
+      enseignements: result.rows
+    });
+  } catch (error) {
+    console.error('❌ Erreur récupération enseignements:', error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
