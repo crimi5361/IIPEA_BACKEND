@@ -218,12 +218,15 @@ async function getMatiereInfo(matiereId) {
         ue.maquette_id,
         sem.nom as semestre_nom,
         maq.parcour,
-        -- Toujours récupérer le type d'évaluation le plus récent
+        maq.filiere_id,
+        tf.libelle as type_filiere, 
         COALESCE(m.type_evaluation, 'note_1_note_2_partiel') as type_evaluation
       FROM matiere m
       LEFT JOIN ue ON m.ue_id = ue.id
       LEFT JOIN semestre sem ON ue.semestre_id = sem.id
       LEFT JOIN maquette maq ON ue.maquette_id = maq.id
+      LEFT JOIN filiere f ON maq.filiere_id = f.id
+      LEFT JOIN typefiliere tf ON f.type_filiere_id = tf.id  
       WHERE m.id = $1
     `;
     
@@ -235,6 +238,9 @@ async function getMatiereInfo(matiereId) {
     
     const matiereInfo = result.rows[0];
     const type = matiereInfo.type_evaluation || 'note_1_note_2_partiel';
+    
+    // Ajouter le type de parcour au format attendu par calculerMoyenne
+    matiereInfo.parcour_type = matiereInfo.type_filiere || 'Universitaire'; // Par défaut Universitaire
     
     // Déterminer quelles notes sont actives selon le type
     switch(type) {
@@ -270,6 +276,9 @@ async function getMatiereInfo(matiereId) {
         matiereInfo.active_notes = { note1: true, note2: true, partiel: true };
         matiereInfo.description_type = "Type non spécifié - toutes notes actives";
     }
+    
+    // Log pour débogage
+    console.log(`  Type de filière détecté: ${matiereInfo.type_filiere} -> parcour_type: ${matiereInfo.parcour_type}`);
     
     return matiereInfo;
   } catch (error) {
@@ -679,121 +688,128 @@ function findEtudiantByMatriculeIipea(etudiants, matriculeIipea) {
   return null;
 }
 
-// Fonction pour calculer la moyenne
+
 function calculerMoyenne(note1, note2, partiel, matiereInfo) {
   const {
     type_evaluation = 'note_1_note_2_partiel',
     active_notes = { note1: true, note2: true, partiel: true },
-    parcour
+    type_filiere = 'Universitaire'
   } = matiereInfo;
   
-  // Si aucune des notes actives n'a de valeur > 0
-  const hasNote1 = active_notes.note1 && note1 > 0;
-  const hasNote2 = active_notes.note2 && note2 > 0;
-  const hasPartiel = active_notes.partiel && partiel > 0;
+  const isUniversitaire = type_filiere === 'Universitaire';
   
-  if (!hasNote1 && !hasNote2 && !hasPartiel) {
-    return 0;
+  // Convertir en nombres
+  const n1 = parseFloat(note1) || 0;
+  const n2 = parseFloat(note2) || 0;
+  const p = parseFloat(partiel) || 0;
+  
+  console.log(`📊 Calcul moyenne: ${type_evaluation}, notes: ${n1}/${n2}/${p}`);
+  
+  // Règle 1: Si une seule note est active, c'est la moyenne
+  const activeNoteTypes = [];
+  if (active_notes.note1 && n1 > 0) activeNoteTypes.push('note1');
+  if (active_notes.note2 && n2 > 0) activeNoteTypes.push('note2');
+  if (active_notes.partiel && p > 0) activeNoteTypes.push('partiel');
+  
+  if (activeNoteTypes.length === 0) return 0;
+  if (activeNoteTypes.length === 1) {
+    if (activeNoteTypes[0] === 'note1') return n1;
+    if (activeNoteTypes[0] === 'note2') return n2;
+    if (activeNoteTypes[0] === 'partiel') return p;
   }
   
   let moyenne = 0;
   
-  // Calcul selon le type d'évaluation
   switch(type_evaluation) {
     case 'partiel_only':
-      // Seulement le partiel compte
-      return partiel > 0 ? partiel : 0;
+    case 'note_1_only':
+    case 'note_2_only':
+      if (type_evaluation === 'note_1_only' && n1 > 0) return n1;
+      if (type_evaluation === 'note_2_only' && n2 > 0) return n2;
+      if (type_evaluation === 'partiel_only' && p > 0) return p;
+      return 0;
       
     case 'note_1_note_2':
-      // Moyenne des deux notes seulement
-      if (note1 > 0 && note2 > 0) {
-        return (note1 + note2) / 2;
-      } else if (note1 > 0) {
-        return note1;
-      } else if (note2 > 0) {
-        return note2;
-      }
-      return 0;
+      // Moyenne simple des 2 notes
+      if (n1 > 0 && n2 > 0) {
+        moyenne = (n1 + n2) / 2;
+      } else if (n1 > 0) moyenne = n1;
+      else if (n2 > 0) moyenne = n2;
+      break;
       
     case 'note_1_partiel':
-      // Moyenne pondérée 30% note1 + 70% partiel (ou autre ratio selon parcour)
-      if (note1 > 0 && partiel > 0) {
-        const poidsNote1 = parcour === 'LICENCE' ? 0.3 : 0.4;
-        const poidsPartiel = 1 - poidsNote1;
-        return (note1 * poidsNote1 + partiel * poidsPartiel);
-      } else if (note1 > 0) {
-        return note1;
-      } else if (partiel > 0) {
-        return partiel;
-      }
-      return 0;
+      if (n1 > 0 && p > 0) {
+        if (isUniversitaire) {
+          // 40% note1 + 60% partiel
+          moyenne = (n1 * 0.4) + (p * 0.6);
+        } else {
+          // 50% note1 + 50% partiel
+          moyenne = (n1 * 0.5) + (p * 0.5);
+        }
+      } else if (n1 > 0) moyenne = n1;
+      else if (p > 0) moyenne = p;
+      break;
       
     case 'note_2_partiel':
-      // Moyenne pondérée 30% note2 + 70% partiel
-      if (note2 > 0 && partiel > 0) {
-        const poidsNote2 = parcour === 'LICENCE' ? 0.3 : 0.4;
-        const poidsPartiel = 1 - poidsNote2;
-        return (note2 * poidsNote2 + partiel * poidsPartiel);
-      } else if (note2 > 0) {
-        return note2;
-      } else if (partiel > 0) {
-        return partiel;
-      }
-      return 0;
-      
-    case 'note_1_only':
-      return note1 > 0 ? note1 : 0;
-      
-    case 'note_2_only':
-      return note2 > 0 ? note2 : 0;
+      if (n2 > 0 && p > 0) {
+        if (isUniversitaire) {
+          // 40% note2 + 60% partiel
+          moyenne = (n2 * 0.4) + (p * 0.6);
+        } else {
+          // 50% note2 + 50% partiel
+          moyenne = (n2 * 0.5) + (p * 0.5);
+        }
+      } else if (n2 > 0) moyenne = n2;
+      else if (p > 0) moyenne = p;
+      break;
       
     case 'note_1_note_2_partiel':
     default:
-      // Calcul classique avec pondérations adaptées selon parcour
-      let poidsNote1 = 0.3;
-      let poidsNote2 = 0.3;
-      let poidsPartiel = 0.4;
-      
-      // Ajuster les pondérations selon le parcour
-      if (parcour === 'LICENCE') {
-        // Licence: souvent 30-30-40
-        poidsNote1 = 0.3;
-        poidsNote2 = 0.3;
-        poidsPartiel = 0.4;
-      } else if (parcour === 'MASTER') {
-        // Master: parfois plus de poids sur le partiel
-        poidsNote1 = 0.2;
-        poidsNote2 = 0.2;
-        poidsPartiel = 0.6;
-      } else if (parcour === 'DOCTORAT') {
-        // Doctorat: poids variable
-        poidsNote1 = 0.25;
-        poidsNote2 = 0.25;
-        poidsPartiel = 0.5;
+      // CORRECTION : 20% note1 + 20% note2 + 60% partiel (SANS division par totalPoids)
+      if (isUniversitaire) {
+        // Version simple et correcte :
+        let total = 0;
+        let poidsTotal = 0;
+        
+        if (active_notes.note1 && n1 > 0) {
+          total += n1 * 0.2;
+          poidsTotal += 0.2;
+        }
+        if (active_notes.note2 && n2 > 0) {
+          total += n2 * 0.2;
+          poidsTotal += 0.2;
+        }
+        if (active_notes.partiel && p > 0) {
+          total += p * 0.6;
+          poidsTotal += 0.6;
+        }
+        
+        // Si certaines notes sont manquantes, répartir les poids
+        if (poidsTotal > 0 && poidsTotal < 1.0) {
+          // Normaliser les poids
+          total = total / poidsTotal;
+          poidsTotal = 1.0;
+        }
+        
+        moyenne = total;  // Pas de division ici !
+        console.log(`  Calcul Univ: ${n1}×0.2 + ${n2}×0.2 + ${p}×0.6 = ${moyenne}`);
+        
+      } else {
+        // PROFESSIONNEL: Moyenne simple
+        const notesValides = [];
+        if (active_notes.note1 && n1 > 0) notesValides.push(n1);
+        if (active_notes.note2 && n2 > 0) notesValides.push(n2);
+        if (active_notes.partiel && p > 0) notesValides.push(p);
+        
+        const somme = notesValides.reduce((acc, note) => acc + note, 0);
+        moyenne = notesValides.length > 0 ? somme / notesValides.length : 0;
       }
-      
-      let totalPondere = 0;
-      let totalPoids = 0;
-      
-      if (hasNote1) {
-        totalPondere += note1 * poidsNote1;
-        totalPoids += poidsNote1;
-      }
-      
-      if (hasNote2) {
-        totalPondere += note2 * poidsNote2;
-        totalPoids += poidsNote2;
-      }
-      
-      if (hasPartiel) {
-        totalPondere += partiel * poidsPartiel;
-        totalPoids += poidsPartiel;
-      }
-      
-      moyenne = totalPoids > 0 ? totalPondere / totalPoids : 0;
-      return Math.round(moyenne * 100) / 100;
   }
+  
+  console.log(`✅ Moyenne: ${moyenne}`);
+  return moyenne;
 }
+
 
 // Vérifier si une note existe déjà pour un étudiant dans un enseignement donné
 async function checkExistingNote(etudiantId, enseignementId, sessionId) {
@@ -809,8 +825,57 @@ async function checkExistingNote(etudiantId, enseignementId, sessionId) {
 }
 
 // Insérer ou mettre à jour une note
+// Insérer ou mettre à jour une note - VERSION CORRIGÉE
 async function upsertNote(noteData, fichierSource, noteId = null) {
   try {
+    console.log(`📝 Upsert note avec données:`, {
+      note1: noteData.note1,
+      note2: noteData.note2,
+      partiel: noteData.partiel,
+      moyenne: noteData.moyenne,
+      coefficient: noteData.coefficient
+    });
+    
+    // VALIDATION ET NORMALISATION DES DONNÉES
+    const validateAndFormat = (value) => {
+      if (value === null || value === undefined || value === '') {
+        return null; // NULL pour PostgreSQL
+      }
+      
+      const num = parseFloat(value);
+      if (isNaN(num)) {
+        return null;
+      }
+      
+      // Arrondir à 2 décimales
+      const rounded = Math.round(num * 100) / 100;
+      
+      // Vérifier les limites (0-20)
+      if (rounded < 0) return 0;
+      if (rounded > 20) return 20;
+      
+      return rounded;
+    };
+    
+    // Formater les notes
+    const note1 = validateAndFormat(noteData.note1);
+    const note2 = validateAndFormat(noteData.note2);
+    const partiel = validateAndFormat(noteData.partiel);
+    const moyenne = validateAndFormat(noteData.moyenne);
+    
+    // Formater le coefficient
+    let coefficient = 1;
+    if (noteData.coefficient) {
+      const coefNum = parseFloat(noteData.coefficient);
+      if (!isNaN(coefNum) && coefNum > 0) {
+        coefficient = coefNum;
+      }
+    }
+    
+    console.log(`📝 Données formatées:`, {
+      note1, note2, partiel, moyenne, coefficient
+    });
+    
     if (noteId) {
       const updateQuery = `
         UPDATE note SET
@@ -820,11 +885,13 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
         RETURNING id
       `;
       
+      console.log(`🔄 Mise à jour note ID: ${noteId}`);
       const result = await db.query(updateQuery, [
-        noteData.note1, noteData.note2, noteData.partiel, noteData.moyenne,
-        noteData.coefficient, fichierSource, noteId
+        note1, note2, partiel, moyenne,
+        coefficient, fichierSource, noteId
       ]);
       
+      console.log(`✅ Note mise à jour: ${result.rows[0].id}`);
       return { action: 'update', id: result.rows[0].id };
     } else {
       const insertQuery = `
@@ -836,16 +903,19 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
         RETURNING id
       `;
       
+      console.log(`🆕 Insertion nouvelle note`);
       const result = await db.query(insertQuery, [
-        noteData.note1, noteData.note2, noteData.partiel, noteData.moyenne,
+        note1, note2, partiel, moyenne,
         noteData.enseignementId, noteData.etudiantId, noteData.sessionId, noteData.semestreId,
-        noteData.coefficient, fichierSource
+        coefficient, fichierSource
       ]);
       
+      console.log(`✅ Nouvelle note créée: ${result.rows[0].id}`);
       return { action: 'insert', id: result.rows[0].id };
     }
   } catch (error) {
-    console.error(`❌ Erreur upsert note: ${error.message}`);
+    console.error(`❌ Erreur détaillée upsert note: ${error.message}`);
+    console.error('Stack:', error.stack);
     throw error;
   }
 }
@@ -1097,11 +1167,13 @@ exports.checkExistingNotes = async (req, res) => {
 // ================= CONTROLLER PRINCIPAL AVEC ENSEIGNEMENT (CORRIGÉ) =================
 exports.uploadNotes = async (req, res) => {
   console.log('\n' + '='.repeat(80));
-  console.log('🚀 DÉBUT TRAITEMENT UPLOAD NOTES AVEC ENSEIGNEMENT');
+  console.log('🚀 DÉBUT TRAITEMENT UPLOAD NOTES AVEC TRANSACTION');
   console.log('='.repeat(80));
   
   let uploadedFile = null;
   let fileSaved = false;
+  let transactionClient = null;
+  let enseignementId = null;
   
   try {
     const { groupeId, matiereId, noteTypes, professeurId } = req.body;
@@ -1131,13 +1203,28 @@ exports.uploadNotes = async (req, res) => {
       throw new Error('Un professeur doit être sélectionné pour créer l\'enseignement');
     }
     
+    // ================= DÉBUT DE LA TRANSACTION =================
+    transactionClient = await db.connect();
+    await transactionClient.query('BEGIN');
+    console.log('🔄 Transaction démarrée');
+    
     // ================= ÉTAPE 1: DÉTERMINER LE TYPE D'ÉVALUATION =================
     const nouveauTypeEvaluation = determinerTypeEvaluation(parsedNoteTypes);
     console.log(`📊 Type d'évaluation déterminé: ${nouveauTypeEvaluation}`);
-    console.log(`   Notes cochées:`, parsedNoteTypes);
     
-    // ================= ÉTAPE 2: METTRE À JOUR LE TYPE D'ÉVALUATION =================
-    const matiereMiseAJour = await updateTypeEvaluation(matiereId, nouveauTypeEvaluation);
+    // ================= ÉTAPE 2: METTRE À JOUR LE TYPE D'ÉVALUATION DANS LA TRANSACTION =================
+    console.log(`🔄 Mise à jour type évaluation pour matière ${matiereId}: ${nouveauTypeEvaluation}`);
+    
+    const updateTypeQuery = `
+      UPDATE matiere 
+      SET type_evaluation = $1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      RETURNING id, nom, type_evaluation
+    `;
+    
+    const matiereMiseAJour = await transactionClient.query(updateTypeQuery, [nouveauTypeEvaluation, matiereId]);
+    console.log(`✅ Type d'évaluation mis à jour: ${matiereMiseAJour.rows[0].nom}`);
     
     // ================= ÉTAPE 3: RÉCUPÉRER LES INFORMATIONS =================
     const groupeInfo = await getGroupeInfo(groupeId);
@@ -1150,29 +1237,70 @@ exports.uploadNotes = async (req, res) => {
     console.log('\n  Informations récupérées:');
     console.log(`   Groupe: ${groupeInfo.nom} (ID: ${groupeInfo.id})`);
     console.log(`   Matière: ${matiereInfo.nom} (ID: ${matiereInfo.id})`);
+    console.log(`   Coefficient matière: ${matiereInfo.coefficient || 1}`);
     console.log(`   Type d'évaluation: ${nouveauTypeEvaluation}`);
     console.log(`   Session: ${session.nom} (ID: ${session.id})`);
     console.log(`   Année académique: ${anneeAcademique}`);
     console.log(`   Professeur ID: ${professeurId}`);
     console.log(`   Étudiants dans le groupe: ${etudiants.length}`);
     
-    // ================= ÉTAPE 4 CRITIQUE: CRÉER OU METTRE À JOUR L'ENSEIGNEMENT =================
-    // MODIFICATION IMPORTANTE: Utiliser getOrUpdateEnseignement au lieu de getOrCreateEnseignement
-    const enseignementId = await getOrUpdateEnseignement(
-      professeurId, 
-      matiereId, 
-      groupeId, 
-      anneeAcademique
+    // ================= ÉTAPE 4 CRITIQUE: CRÉER OU METTRE À JOUR L'ENSEIGNEMENT DANS LA TRANSACTION =================
+    // Recherche d'un enseignement existant
+    const findEnseignementQuery = `
+      SELECT id, professeur_id, created_at 
+      FROM enseignement 
+      WHERE matiere_id = $1 AND groupe_id = $2 AND annee_academique = $3
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    
+    const existingEnseignement = await transactionClient.query(
+      findEnseignementQuery, 
+      [matiereId, groupeId, anneeAcademique]
     );
     
-    console.log(`🎓 Enseignement ID: ${enseignementId}`);
+    if (existingEnseignement.rows.length > 0) {
+      enseignementId = existingEnseignement.rows[0].id;
+      console.log(`  Enseignement existant trouvé: ${enseignementId}`);
+      
+      // Mettre à jour le professeur si différent
+      if (existingEnseignement.rows[0].professeur_id !== parseInt(professeurId)) {
+        console.log(`  Mise à jour du professeur: ${existingEnseignement.rows[0].professeur_id} -> ${professeurId}`);
+        const updateEnseignementQuery = `
+          UPDATE enseignement 
+          SET professeur_id = $1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $2
+          RETURNING id
+        `;
+        
+        const updated = await transactionClient.query(updateEnseignementQuery, [professeurId, enseignementId]);
+        console.log(`✅ Enseignement mis à jour: ${updated.rows[0].id}`);
+      } else {
+        console.log(`  Enseignement conservé: ${enseignementId}`);
+      }
+    } else {
+      // Créer un NOUVEL enseignement DANS LA TRANSACTION
+      console.log(`🆕 Création nouvel enseignement`);
+      const insertEnseignementQuery = `
+        INSERT INTO enseignement (professeur_id, matiere_id, groupe_id, annee_academique, created_at)
+        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+        RETURNING id
+      `;
+      
+      const newEnseignement = await transactionClient.query(
+        insertEnseignementQuery, 
+        [professeurId, matiereId, groupeId, anneeAcademique]
+      );
+      
+      enseignementId = newEnseignement.rows[0].id;
+      console.log(`✅ Nouvel enseignement créé: ${enseignementId}`);
+    }
     
     // ================= ÉTAPE 5: PARSER LE FICHIER =================
     const studentsData = parseExcelFile(uploadedFile.path, parsedNoteTypes);
-    
     console.log(`\n  ${studentsData.length} étudiants trouvés dans le fichier Excel`);
     
-    // ================= ÉTAPE 6: TRAITER LES NOTES =================
+    // ================= ÉTAPE 6: TRAITER LES NOTES DANS LA TRANSACTION =================
     const results = {
       processedCount: 0,
       inserted: 0,
@@ -1181,6 +1309,78 @@ exports.uploadNotes = async (req, res) => {
       etudiantsNonTrouves: []
     };
     
+    // Fonction pour vérifier si une note existe déjà
+    const checkExistingNoteInTransaction = async (etudiantId, enseignementId, sessionId) => {
+      const query = `SELECT id FROM note WHERE etudiant_id = $1 AND enseignement_id = $2 AND session_id = $3 LIMIT 1`;
+      const result = await transactionClient.query(query, [etudiantId, enseignementId, sessionId]);
+      return result.rows.length > 0 ? result.rows[0].id : null;
+    };
+    
+    // Fonction pour insérer ou mettre à jour une note dans la transaction
+    const upsertNoteInTransaction = async (noteData, fichierSource, noteId = null) => {
+      const validateAndFormat = (value) => {
+        if (value === null || value === undefined || value === '') {
+          return null;
+        }
+        const num = parseFloat(value);
+        if (isNaN(num)) {
+          return null;
+        }
+        const rounded = Math.round(num * 100) / 100;
+        if (rounded < 0) return 0;
+        if (rounded > 20) return 20;
+        return rounded;
+      };
+      
+      const note1 = validateAndFormat(noteData.note1);
+      const note2 = validateAndFormat(noteData.note2);
+      const partiel = validateAndFormat(noteData.partiel);
+      const moyenne = validateAndFormat(noteData.moyenne);
+      
+      let coefficient = 1;
+      if (noteData.coefficient) {
+        const coefNum = parseFloat(noteData.coefficient);
+        if (!isNaN(coefNum) && coefNum > 0) {
+          coefficient = coefNum;
+        }
+      }
+      
+      if (noteId) {
+        const updateQuery = `
+          UPDATE note SET
+            note1 = $1, note2 = $2, partiel = $3, moyenne = $4,
+            coefficient = $5, fichier_source = $6, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $7
+          RETURNING id
+        `;
+        
+        const result = await transactionClient.query(updateQuery, [
+          note1, note2, partiel, moyenne,
+          coefficient, fichierSource, noteId
+        ]);
+        
+        return { action: 'update', id: result.rows[0].id };
+      } else {
+        const insertQuery = `
+          INSERT INTO note (
+            note1, note2, partiel, moyenne,
+            enseignement_id, etudiant_id, session_id, semestre_id,
+            coefficient, fichier_source, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
+          RETURNING id
+        `;
+        
+        const result = await transactionClient.query(insertQuery, [
+          note1, note2, partiel, moyenne,
+          noteData.enseignementId, noteData.etudiantId, noteData.sessionId, noteData.semestreId,
+          coefficient, fichierSource
+        ]);
+        
+        return { action: 'insert', id: result.rows[0].id };
+      }
+    };
+    
+    // Traiter chaque étudiant
     for (const studentData of studentsData) {
       try {
         console.log(`\n--- Ligne ${studentData.ligne} ---`);
@@ -1205,7 +1405,7 @@ exports.uploadNotes = async (req, res) => {
           partiel: studentData.partiel || 0
         };
         
-        // Utiliser la fonction calculerMoyenne
+        // Calculer la moyenne avec la nouvelle fonction qui gère les coefficients > 15
         const moyenne = calculerMoyenne(
           noteValues.note1,
           noteValues.note2,
@@ -1213,7 +1413,7 @@ exports.uploadNotes = async (req, res) => {
           matiereInfo
         );
         
-        const existingNoteId = await checkExistingNote(
+        const existingNoteId = await checkExistingNoteInTransaction(
           etudiant.id,
           enseignementId,
           session.id
@@ -1231,7 +1431,7 @@ exports.uploadNotes = async (req, res) => {
           coefficient: matiereInfo.coefficient || 1
         };
         
-        const upsertResult = await upsertNote(
+        const upsertResult = await upsertNoteInTransaction(
           noteData,
           uploadedFile.filename,
           existingNoteId
@@ -1259,7 +1459,7 @@ exports.uploadNotes = async (req, res) => {
       }
     }
     
-    // ================= ÉTAPE 7: RÉSULTAT FINAL =================
+    // ================= ÉTAPE 7: VALIDER OU ANNULER LA TRANSACTION =================
     const hasErrors = results.errors.length > 0;
     const noStudentsFound = results.etudiantsNonTrouves.length === studentsData.length;
     const success = results.processedCount > 0 && !hasErrors;
@@ -1277,6 +1477,9 @@ exports.uploadNotes = async (req, res) => {
     console.log(`   Succès: ${success ? '  OUI' : '❌ NON'}`);
     
     if (success) {
+      // VALIDER LA TRANSACTION
+      await transactionClient.query('COMMIT');
+      console.log('✅ Transaction COMMITÉE');
       fileSaved = true;
       console.log('💾 Fichier conservé dans:', uploadedFile.path);
       
@@ -1303,6 +1506,7 @@ exports.uploadNotes = async (req, res) => {
           chemin: uploadedFile.path,
           parcour: matiereInfo.parcour || 'Non spécifié',
           matiere: matiereInfo.nom,
+          coefficient_matiere: matiereInfo.coefficient || 1,
           groupe: groupeInfo.nom,
           session: session.nom,
           professeur: professeurNom,
@@ -1330,7 +1534,10 @@ exports.uploadNotes = async (req, res) => {
       res.status(200).json(response);
       
     } else {
-      console.log('❌ Échec du traitement - suppression du fichier');
+      // ANNULER LA TRANSACTION (ROLLBACK)
+      await transactionClient.query('ROLLBACK');
+      console.log('🔄 Transaction ROLLBACK - aucune donnée sauvegardée');
+      
       if (uploadedFile && fs.existsSync(uploadedFile.path)) {
         try {
           fs.unlinkSync(uploadedFile.path);
@@ -1353,6 +1560,7 @@ exports.uploadNotes = async (req, res) => {
         success: false,
         error: errorMessage,
         details: {
+          enseignementCree: false, // IMPORTANT: enseignement NON créé
           stats: {
             totalTraitees: results.processedCount,
             notesInserees: results.inserted,
@@ -1379,7 +1587,18 @@ exports.uploadNotes = async (req, res) => {
     console.error('\n' + '❌'.repeat(40));
     console.error('❌ ERREUR CRITIQUE UPLOAD NOTES:');
     console.error('❌ Message:', error.message);
-    console.error('❌ Stack:', error.stack);
+    
+    // Annuler la transaction en cas d'erreur
+    if (transactionClient) {
+      try {
+        await transactionClient.query('ROLLBACK');
+        console.log('🔄 Transaction ROLLBACK (erreur)');
+      } catch (rollbackError) {
+        console.error('❌ Erreur ROLLBACK:', rollbackError.message);
+      } finally {
+        transactionClient.release();
+      }
+    }
     
     if (uploadedFile && fs.existsSync(uploadedFile.path) && !fileSaved) {
       try {
@@ -1404,6 +1623,11 @@ exports.uploadNotes = async (req, res) => {
     };
     
     res.status(500).json(errorResponse);
+  } finally {
+    // Libérer la connexion transactionnelle
+    if (transactionClient) {
+      transactionClient.release();
+    }
   }
 };
 
