@@ -650,7 +650,7 @@ const determinerDecisionFonction = (moyenneGenerale, creditsValides, creditsTota
       const matieresEnSession = ues.some(ue => 
         ue.matieres.some(m => !m.valide && m.a_note && m.moyenne < 10)
       );
-      return matieresEnSession ? 'Session' : 'Échec';
+      return matieresEnSession ? 'Échec' : 'Session';
     }
   } 
   // Logique pour filière professionnelle
@@ -658,7 +658,7 @@ const determinerDecisionFonction = (moyenneGenerale, creditsValides, creditsTota
     if (moyenneGenerale >= 10) {
       return 'Admis';
     } else if (moyenneGenerale >= 8) {
-      return 'Session';
+      return 'Ratrapage';
     } else {
       return 'Échec';
     }
