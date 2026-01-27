@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PV - <%= data.maquette.filiere %> - Semestre <%= data.semestre.id %></title>
+    <style>
+        /* Style minimal pour impression */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Times New Roman', Times, serif; 
+            font-size: 11px; 
+            line-height: 1.3; 
+            color: #000; 
+            padding: 10px; 
+        }
+        
+        /* En-tête */
+        .header { 
+            text-align: center; 
+            margin-bottom: 15px; 
+            border-bottom: 2px solid #000; 
+            padding-bottom: 8px; 
+        }
+        .header h1 { 
+            font-size: 14px; 
+            margin-bottom: 3px; 
+            text-transform: uppercase; 
+        }
+        .header h2 { 
+            font-size: 12px; 
+            font-weight: normal; 
+            margin: 3px 0; 
+        }
+        
+        /* Informations */
+        .info-box { 
+            margin: 12px 0; 
+            border: 1px solid #000; 
+            padding: 6px; 
+        }
+        .info-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+        }
+        .info-table td { 
+            padding: 4px 8px; 
+            vertical-align: top; 
+        }
+        .info-label { 
+            font-weight: bold; 
+            white-space: nowrap; 
+        }
+        
+        /* Tableau principal - STRUCTURE COMPLEXE */
+        .main-container { 
+            margin: 15px 0; 
+            overflow-x: auto; 
+        }
+        .main-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            border: 2px solid #000; 
+        }
+        
+        /* En-tête du tableau principal (niveaux multiples) */
+        .table-header th { 
+            background-color: #f0f0f0; 
+            border: 1px solid #000; 
+            padding: 6px 3px; 
+            text-align: center; 
+            font-weight: bold; 
+            vertical-align: middle; 
+        }
+        
+        /* Première ligne d'en-tête */
+        .header-row-1 th { 
+            border-bottom: 2px solid #000; 
+            padding: 8px 3px; 
+        }
+        
+        /* Noms des UE (grande cellule qui s'étend sur plusieurs colonnes) */
+        .ue-header { 
+            background-color: #e8e8e8 !important; 
+            font-size: 10px; 
+            padding: 4px 2px !important; 
+        }
+        
+        /* Noms des matières */
+        .matiere-header { 
+            background-color: #f8f8f8 !important; 
+            font-size: 9px; 
+            padding: 3px 1px !important; 
+            max-width: 60px; 
+            word-wrap: break-word; 
+            line-height: 1.1; 
+        }
+        
+        /* Cellules des étudiants */
+        .student-row td { 
+            border: 1px solid #000; 
+            padding: 5px 3px; 
+            text-align: center; 
+            vertical-align: middle; 
+        }
+        
+        /* Colonne étudiant combinée */
+        .student-info { 
+            text-align: left; 
+            padding-left: 5px !important; 
+        }
+        .matricule { 
+            font-size: 9px; 
+            color: #555; 
+            display: block; 
+            margin-top: 2px; 
+        }
+        
+        /* Cellules de notes */
+        .note-cell { 
+            min-width: 35px; 
+            font-size: 10px; 
+        }
+        
+        /* Résultat UE */
+        .resultat-ue { 
+            background-color: #f5f5f5; 
+            font-weight: bold; 
+            border-left: 2px solid #000 !important; 
+            border-right: 2px solid #000 !important; 
+        }
+        
+        /* Décision */
+        .decision-cell { 
+            font-weight: bold; 
+            text-transform: uppercase; 
+            font-size: 10px; 
+        }
+        
+        /* Pied de page */
+        .footer { 
+            margin-top: 30px; 
+            padding-top: 15px; 
+            border-top: 1px solid #000; 
+        }
+        .signatures { 
+            width: 100%; 
+            margin-top: 25px; 
+        }
+        .signatures td { 
+            width: 33%; 
+            text-align: center; 
+            padding-top: 25px; 
+        }
+        
+        /* Pour l'impression */
+        @media print {
+            body { padding: 5px; font-size: 10px; }
+            .no-print { display: none !important; }
+            .main-container { overflow-x: visible; }
+            .main-table { font-size: 9px; }
+        }
+        
+        /* Bouton impression */
+        .print-btn { 
+            position: fixed; 
+            top: 10px; 
+            right: 10px; 
+            padding: 5px 10px; 
+            background: white; 
+            border: 1px solid #000; 
+            cursor: pointer; 
+            z-index: 1000; 
+            font-size: 11px; 
+        }
+    </style>
+</head>
+<body>
+    <button class="print-btn no-print" onclick="window.print()">🖨️ Imprimer</button>
+
+    <!-- En-tête -->
+    <div class="header">
+        <h1>PROCÈS-VERBAL DE DÉLIBÉRATION</h1>
+        <h2><%= data.maquette.filiere %> (<%= data.maquette.sigle %>)</h2>
+        <h2>Année académique <%= data.groupe.annee_academique %></h2>
+    </div>
+
+    <!-- Informations -->
+    <div class="info-box">
+        <table class="info-table">
+            <tr>
+                <td class="info-label">Type de filière:</td>
+                <td><%= data.type_filiere %></td>
+                <td class="info-label">Parcours:</td>
+                <td><%= data.maquette.parcour %></td>
+            </tr>
+            <tr>
+                <td class="info-label">Semestre:</td>
+                <td>Semestre <%= data.semestre.id %></td>
+                <td class="info-label">Groupe:</td>
+                <td><%= data.groupe.nom %></td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Tableau principal avec structure complexe -->
+    <div class="main-container">
+        <table class="main-table">
+            <thead>
+                <!-- Première ligne : Numéro, Étudiant, UE, Moyenne, Crédits, Décision -->
+                <tr class="table-header header-row-1">
+                    <th rowspan="3" width="3%">N°</th>
+                    <th rowspan="3" width="20%">ÉTUDIANT</th>
+                    
+                    <!-- Pour chaque UE, créer une grande cellule qui s'étend sur ses matières + résultat -->
+                    <% if (data.etudiants && data.etudiants.length > 0 && data.etudiants[0].ues) { 
+                        data.etudiants[0].ues.forEach((ue, ueIndex) => { 
+                            const matieresCount = ue.matieres.length; %>
+                            <th colspan="<%= matieresCount + 1 %>" class="ue-header">
+                                <%= ue.libelle %>
+                            </th>
+                    <%  }); 
+                    } %>
+                    
+                    <th rowspan="3" width="6%">MOY.<br>GÉN.</th>
+                    <th rowspan="3" width="8%">CRÉDITS<br>V/T</th>
+                    <th rowspan="3" width="10%">DÉCISION</th>
+                </tr>
+                
+                <!-- Deuxième ligne : Noms des matières et colonne "Résultat" pour chaque UE -->
+                <tr class="table-header">
+                    <% if (data.etudiants && data.etudiants.length > 0 && data.etudiants[0].ues) { 
+                        data.etudiants[0].ues.forEach((ue) => { 
+                            ue.matieres.forEach((matiere, matIndex) => { %>
+                                <th class="matiere-header" title="<%= matiere.nom %>">
+                                    <%= matiere.nom.length > 20 ? matiere.nom.substring(0, 20) + '...' : matiere.nom %>
+                                </th>
+                    <%      }); %>
+                            <th class="matiere-header resultat-ue">RÉSULTAT</th>
+                    <%  }); 
+                    } %>
+                </tr>
+                
+                <!-- Troisième ligne : Coefficients des matières -->
+                <tr class="table-header">
+                    <% if (data.etudiants && data.etudiants.length > 0 && data.etudiants[0].ues) { 
+                        data.etudiants[0].ues.forEach((ue) => { 
+                            ue.matieres.forEach((matiere) => { %>
+                                <th class="matiere-header">Coef. <%= matiere.coefficient %></th>
+                    <%      }); %>
+                            <th class="matiere-header resultat-ue">Moy. UE</th>
+                    <%  }); 
+                    } %>
+                </tr>
+            </thead>
+            
+            <tbody>
+                <% data.etudiants.forEach((etudiant, etudiantIndex) => { %>
+                <tr class="student-row">
+                    <!-- Numéro -->
+                    <td><%= etudiantIndex + 1 %></td>
+                    
+                    <!-- Colonne combinée : Matricule + Nom + Prénoms -->
+                    <td class="student-info">
+                        <strong><%= etudiant.nom %> <%= etudiant.prenoms %></strong>
+                        <span class="matricule">Matricule: <%= etudiant.matricule %></span>
+                    </td>
+                    
+                    <!-- Notes par matière et résultat par UE -->
+                    <% etudiant.ues.forEach((ue) => { 
+                        // Notes pour chaque matière de l'UE
+                        ue.matieres.forEach((matiere) => { %>
+                            <td class="note-cell">
+                                <% if (matiere.a_note) { %>
+                                    <span class="<%= matiere.valide ? 'moyenne-valide' : 'moyenne-non-valide' %>">
+                                        <%= matiere.moyenne %>
+                                    </span>
+                                <% } else { %>
+                                    <span style="color: #888; font-style: italic;">-</span>
+                                <% } %>
+                            </td>
+                    <%  }); %>
+                    
+                        <!-- Résultat de l'UE (moyenne pondérée) -->
+                        <td class="note-cell resultat-ue">
+                            <strong><%= ue.moyenne %></strong>
+                            <% if (ue.harmonisee) { %>
+                                <br><span style="font-size: 8px; color: #777;">(H)</span>
+                            <% } %>
+                        </td>
+                    <% }); %>
+                    
+                    <!-- Moyenne générale -->
+                    <td class="note-cell">
+                        <strong><%= etudiant.moyenne_generale %></strong>
+                    </td>
+                    
+                    <!-- Crédits -->
+                    <td class="note-cell">
+                        <%= etudiant.credits_valides %>/<%= etudiant.credits_total %>
+                    </td>
+                    
+                    <!-- Décision -->
+                    <td class="decision-cell">
+                        <%= etudiant.decision %>
+                    </td>
+                </tr>
+                <% }); %>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Légende et informations -->
+    <div style="margin-top: 10px; font-size: 9px; color: #555;">
+        <p>
+            <strong>Légende:</strong> 
+            H = Harmonisation appliquée | 
+            - = Note non disponible |
+            Moy. Gén. = Moyenne Générale | 
+            Crédits V/T = Crédits Validés / Crédits Totaux
+        </p>
+        <p>
+            <strong>Total:</strong> 
+            <%= data.etudiants.length %> étudiant(s) | 
+            <%= data.etudiants[0].ues.length %> UE | 
+            Généré le <%= new Date().toLocaleDateString('fr-FR') %> à <%= new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}) %>
+        </p>
+    </div>
+
+    <!-- Signatures -->
+    <div class="footer">
+        <table class="signatures">
+            <tr>
+                <td>
+                    Le Chef de Département<br><br><br>
+                    __________________________<br>
+                    <small>Nom et signature</small>
+                </td>
+                <td>
+                    Le Responsable Pédagogique<br><br><br>
+                    __________________________<br>
+                    <small>Nom et signature</small>
+                </td>
+                <td>
+                    Le Directeur<br><br><br>
+                    __________________________<br>
+                    <small>Nom et signature</small>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Script pour améliorer l'affichage sur écran (optionnel) -->
+    <script class="no-print">
+        // Ajuster automatiquement la largeur des colonnes de matières
+        document.addEventListener('DOMContentLoaded', function() {
+            const matiereHeaders = document.querySelectorAll('.matiere-header');
+            matiereHeaders.forEach(header => {
+                const text = header.textContent || header.innerText;
+                if (text.length > 15) {
+                    header.style.fontSize = '8px';
+                }
+            });
+            
+            // Ajouter un effet au survol des lignes étudiant
+            const studentRows = document.querySelectorAll('.student-row');
+            studentRows.forEach(row => {
+                row.addEventListener('mouseenter', function() {
+                    this.style.backgroundColor = '#f9f9f9';
+                });
+                row.addEventListener('mouseleave', function() {
+                    this.style.backgroundColor = '';
+                });
+            });
+        });
+    </script>
+</body>
+</html>

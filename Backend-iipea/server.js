@@ -98,6 +98,7 @@ const apiRoutes = [
   { path: "/api/notes", route: require('./routes/notes.routes') },
   { path: "/api/professeur", route: require('./routes/professeur.routes')},
   { path: "/api/evaluation", route: require('./routes/evaluation.routes')},
+  { path: "/api/PV", route: require('./routes/PV.routes')},
 
 ];
 
