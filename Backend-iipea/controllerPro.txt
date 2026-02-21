@@ -9,7 +9,7 @@ exports.genererPVByGroupe = async (req, res) => {
   try {
     const { groupeId } = req.params;
     
-    console.log(`🎓 Génération PV pour groupe: ${groupeId}`);
+    console.log(` Génération PV pour groupe: ${groupeId}`);
     
     // 1. Récupérer les informations du groupe
     const groupeQuery = `
@@ -52,7 +52,7 @@ exports.genererPVByGroupe = async (req, res) => {
     const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
     const etudiants = etudiantsResult.rows;
     
-    console.log(`👨‍🎓 ${etudiants.length} étudiants trouvés`);
+    console.log(` ${etudiants.length} étudiants trouvés`);
     
     // 3. Récupérer la structure académique (tous semestres)
     const structureAcademique = await getStructureAcademiqueFonction(groupeId, null);
@@ -60,13 +60,13 @@ exports.genererPVByGroupe = async (req, res) => {
     
     // Calculer le total des crédits de la maquette (pour tous les étudiants)
     const totalCreditsMaquette = calculerTotalCreditsMaquette(structureAcademique.ues);
-    console.log(`📊 Total crédits maquette: ${totalCreditsMaquette}`);
+    console.log(`Total crédits maquette: ${totalCreditsMaquette}`);
     
     // 4. Pour chaque étudiant, calculer les résultats avec détails
     const resultatsEtudiants = [];
     
     for (const etudiant of etudiants) {
-      console.log(`📊 Traitement étudiant: ${etudiant.nom} ${etudiant.prenoms}`);
+      console.log(`Traitement étudiant: ${etudiant.nom} ${etudiant.prenoms}`);
       
       const notes = await getNotesEtudiantAvecDetailsFonction(etudiant.id, structureAcademique.maquette_id);
       
@@ -149,7 +149,7 @@ exports.genererPVBySemestre = async (req, res) => {
   try {
     const { groupeId, semestreId } = req.params;
     
-    console.log(`🎓 Génération PV pour groupe: ${groupeId}, semestre: ${semestreId}`);
+    console.log(` Génération PV pour groupe: ${groupeId}, semestre: ${semestreId}`);
     
     // 1. Récupérer les informations du groupe
     const groupeQuery = `
@@ -192,7 +192,7 @@ exports.genererPVBySemestre = async (req, res) => {
     const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
     const etudiants = etudiantsResult.rows;
     
-    console.log(`👨‍🎓 ${etudiants.length} étudiants trouvés`);
+    console.log(` ${etudiants.length} étudiants trouvés`);
     
     // 3. Récupérer la structure académique pour le semestre spécifique
     const structureAcademique = await getStructureAcademiqueFonction(groupeId, semestreId);
@@ -200,13 +200,13 @@ exports.genererPVBySemestre = async (req, res) => {
     
     // Calculer le total des crédits de la maquette pour ce semestre
     const totalCreditsMaquette = calculerTotalCreditsMaquette(structureAcademique.ues);
-    console.log(`📊 Total crédits maquette semestre ${semestreId}: ${totalCreditsMaquette}`);
+    console.log(`Total crédits maquette semestre ${semestreId}: ${totalCreditsMaquette}`);
     
     // 4. Pour chaque étudiant, calculer les résultats avec détails
     const resultatsEtudiants = [];
     
     for (const etudiant of etudiants) {
-      console.log(`📊 Traitement étudiant: ${etudiant.nom} ${etudiant.prenoms}`);
+      console.log(`Traitement étudiant: ${etudiant.nom} ${etudiant.prenoms}`);
       
       const notes = await getNotesEtudiantAvecDetailsFonction(etudiant.id, structureAcademique.maquette_id);
       
@@ -292,7 +292,7 @@ exports.genererPVByEtudiant = async (req, res) => {
   try {
     const { etudiantId } = req.params;
     
-    console.log(`🎓 Génération PV pour étudiant: ${etudiantId}`);
+    console.log(` Génération PV pour étudiant: ${etudiantId}`);
     
     // 1. Récupérer l'étudiant
     const etudiantQuery = `
@@ -670,10 +670,12 @@ const calculerResultatsUEAvecDetailsFonction = async (ue, notes, typeFiliere) =>
   };
 };
 
+
 /**
  * Fonction interne pour calculer les totaux
+ * MODIFIÉE: Utilise le mode passé en paramètre pour décider du calcul des crédits
  */
-const calculerTotauxFonction = (ues, typeFiliere, totalCreditsMaquette) => {
+const calculerTotauxFonction = (ues, modeCalcul, totalCreditsMaquette) => {
   let totalCreditsValides = 0;
   let sommeMoyennesPonderees = 0;
   let totalCoefficients = 0;
@@ -686,7 +688,8 @@ const calculerTotauxFonction = (ues, typeFiliere, totalCreditsMaquette) => {
     if (ueAvecNotes) {
       uesAvecNotes++;
       
-      if (typeFiliere === 'universitaire' || typeFiliere === 'Universitaire') {
+      // Utiliser modeCalcul au lieu de typeFiliere
+      if (modeCalcul === 'universitaire' || modeCalcul === 'Universitaire') {
         // Pour universitaire: calcul des crédits validés matière par matière
         ue.matieres.forEach(matiere => {
           if (matiere.a_note && matiere.valide) {
@@ -704,8 +707,8 @@ const calculerTotauxFonction = (ues, typeFiliere, totalCreditsMaquette) => {
   const moyenneGenerale = totalCoefficients > 0 ? 
     sommeMoyennesPonderees / totalCoefficients : 0;
   
-  // Pour les filières professionnelles, on n'utilise pas les crédits
-  if (typeFiliere === 'Professionnelles' || typeFiliere === 'professionnelles') {
+  // Pour les filières professionnelles (selon modeCalcul), on n'utilise pas les crédits
+  if (modeCalcul === 'Professionnelles' || modeCalcul === 'professionnelles') {
     return {
       moyenneGenerale: parseFloat(moyenneGenerale.toFixed(2)),
       creditsValides: 0,
@@ -724,29 +727,30 @@ const calculerTotauxFonction = (ues, typeFiliere, totalCreditsMaquette) => {
   };
 };
 
+
 /**
  * Fonction interne pour déterminer la décision
+ *  MODIFIÉE: Utilise le mode passé en paramètre
  */
-const determinerDecisionFonction = (creditsValides, creditsTotal, typeFiliere, ues) => {
+const determinerDecisionFonction = (creditsValides, creditsTotal, modeCalcul, ues) => {
   // D'abord vérifier s'il y a des notes
   const aDesNotes = ues.some(ue => ue.matieres.some(m => m.a_note));
   if (!aDesNotes) {
     return 'Aucune note';
   }
   
-  // Logique pour filière universitaire
-  if (typeFiliere === 'universitaire' || typeFiliere === 'Universitaire') {
-    // Admis uniquement si tous les crédits sont validés (30/30)
+  // Logique pour mode universitaire
+  if (modeCalcul === 'universitaire' || modeCalcul === 'Universitaire') {
+    // Admis uniquement si tous les crédits sont validés
     if (creditsValides === creditsTotal) {
       return 'Admis';
     } else {
       return 'Session';
     }
   } 
-  // Logique pour filière professionnelle
-  else if (typeFiliere === 'Professionnelles' || typeFiliere === 'professionnelles') {
-    // Pour professionnelles, on peut avoir des règles spécifiques
-    // Par exemple, admis si moyenne générale >= 10
+  // Logique pour mode professionnel
+  else if (modeCalcul === 'Professionnelles' || modeCalcul === 'professionnelles') {
+    // Pour professionnelles, admis si moyenne générale >= 10
     const moyenneGenerale = ues.reduce((sum, ue) => sum + ue.moyenne, 0) / ues.length;
     if (moyenneGenerale >= 10) {
       return 'Admis';
@@ -755,9 +759,14 @@ const determinerDecisionFonction = (creditsValides, creditsTotal, typeFiliere, u
     }
   }
   
-  return 'Indéterminé - Type de filière non reconnu';
+  return 'Indéterminé - Mode de calcul non reconnu';
 };
 
+// ============ FONCTION POUR SERVIR LA PAGE EJS ============
+
+/**
+ * Affiche la page HTML du PV (rendu avec EJS)
+ */
 // ============ FONCTION POUR SERVIR LA PAGE EJS ============
 
 /**
@@ -767,7 +776,7 @@ exports.afficherPVPage = async (req, res) => {
     try {
         const { groupeId, semestreId } = req.params;
         
-        console.log(`🎓 Affichage page PV pour groupe: ${groupeId}, semestre: ${semestreId}`);
+        console.log(` Affichage page PV pour groupe: ${groupeId}, semestre: ${semestreId}`);
         
         // 1. Récupérer les informations du groupe
         const groupeQuery = `
@@ -796,6 +805,22 @@ exports.afficherPVPage = async (req, res) => {
         
         const groupeInfo = groupeResult.rows[0];
         
+        //  DÉTERMINER LE MODE D'AFFICHAGE RÉEL
+        // Par défaut, on utilise le type_filiere de la base de données
+        let modeAffichage = groupeInfo.type_filiere;
+        let modeCalcul = groupeInfo.type_filiere; // Par défaut, calcul selon le type réel
+        
+        // Vérifier si c'est un groupe spécial (LICENCE...PRO) qui doit s'afficher en mode universitaire
+        const nomGroupe = groupeInfo.nom || '';
+        const estGroupeSpecial = nomGroupe.includes('LICENCE') && nomGroupe.includes('PRO');
+        
+        if (estGroupeSpecial) {
+            console.log(` Groupe spécial détecté: ${nomGroupe} - Utilisation du mode universitaire`);
+            modeAffichage = 'Universitaire'; // Forcer le mode universitaire pour l'affichage
+            //  IMPORTANT: Pour les calculs, on utilise aussi le mode universitaire pour les crédits
+            modeCalcul = 'Universitaire';
+        }
+        
         // 2. Récupérer tous les étudiants du groupe
         const etudiantsQuery = `
             SELECT 
@@ -804,45 +829,45 @@ exports.afficherPVPage = async (req, res) => {
             FROM etudiant 
             WHERE groupe_id = $1 
             AND standing = 'Inscrit'
-            ORDER BY nom, prenoms
+            ORDER BY nom, prenoms  -- Tri alphabétique pour l'affichage
         `;
         
         const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
         const etudiants = etudiantsResult.rows;
         
-        console.log(`👨‍🎓 ${etudiants.length} étudiants trouvés pour la page`);
+        console.log(` ${etudiants.length} étudiants trouvés pour la page`);
         
         // 3. Récupérer la structure académique pour le semestre spécifique
         const structureAcademique = await getStructureAcademiqueFonction(groupeId, semestreId);
-        console.log(`📚 ${structureAcademique.ues.length} UE trouvées pour le semestre ${semestreId}`);
+        console.log(` ${structureAcademique.ues.length} UE trouvées pour le semestre ${semestreId}`);
         
         // Calculer le total des crédits de la maquette pour ce semestre
         const totalCreditsMaquette = calculerTotalCreditsMaquette(structureAcademique.ues);
-        console.log(`📊 Total crédits maquette semestre ${semestreId}: ${totalCreditsMaquette}`);
+        console.log(`Total crédits maquette semestre ${semestreId}: ${totalCreditsMaquette}`);
         
         // 4. Pour chaque étudiant, calculer les résultats avec détails
         const resultatsEtudiants = [];
         
         for (const etudiant of etudiants) {
-            console.log(`📊 Traitement étudiant page: ${etudiant.nom} ${etudiant.prenoms}`);
+            console.log(`Traitement étudiant page: ${etudiant.nom} ${etudiant.prenoms}`);
             
             const notes = await getNotesEtudiantAvecDetailsFonction(etudiant.id, structureAcademique.maquette_id);
             
-            // Calculer les résultats par UE avec détails selon le type de filière
+            //  IMPORTANT: On utilise le modeCalcul pour les calculs des UE
             const uesAvecResultats = [];
             for (const ue of structureAcademique.ues) {
-                const resultatsUE = await calculerResultatsUEAvecDetailsFonction(ue, notes, groupeInfo.type_filiere);
+                const resultatsUE = await calculerResultatsUEAvecDetailsFonction(ue, notes, modeCalcul);
                 uesAvecResultats.push(resultatsUE);
             }
             
-            // Calculer les totaux selon le type de filière
-            const totaux = calculerTotauxFonction(uesAvecResultats, groupeInfo.type_filiere, totalCreditsMaquette);
+            //  Calculer les totaux selon le modeCalcul (pas le type réel)
+            const totaux = calculerTotauxFonction(uesAvecResultats, modeCalcul, totalCreditsMaquette);
             
-            // Déterminer la décision selon le type de filière
+            //  Déterminer la décision selon le modeCalcul
             const decision = determinerDecisionFonction(
                 totaux.creditsValides, 
                 totaux.creditsTotal, 
-                groupeInfo.type_filiere,
+                modeCalcul,
                 uesAvecResultats
             );
             
@@ -859,9 +884,21 @@ exports.afficherPVPage = async (req, res) => {
             });
         }
         
-        // 5. Trier les étudiants par moyenne générale décroissante pour les filières professionnelles
-        if (groupeInfo.type_filiere === 'Professionnelles' || groupeInfo.type_filiere === 'professionnelles') {
-            resultatsEtudiants.sort((a, b) => b.moyenne_generale - a.moyenne_generale);
+        // 5. Calculer les rangs pour les filières professionnelles (UNIQUEMENT si le mode d'affichage est professionnel)
+        if (modeAffichage === 'Professionnelles' || modeAffichage === 'professionnelles') {
+            // Créer une copie triée par moyenne pour calculer les rangs
+            const etudiantsTries = [...resultatsEtudiants].sort((a, b) => b.moyenne_generale - a.moyenne_generale);
+            
+            // Créer un map pour stocker le rang de chaque étudiant
+            const rangMap = new Map();
+            etudiantsTries.forEach((etudiant, index) => {
+                rangMap.set(etudiant.etudiant_id, index + 1);
+            });
+            
+            // Ajouter le rang à chaque étudiant (sans changer l'ordre alphabétique)
+            resultatsEtudiants.forEach(etudiant => {
+                etudiant.rang = rangMap.get(etudiant.etudiant_id);
+            });
         }
         
         // 6. Structurer les données pour le template EJS
@@ -878,7 +915,10 @@ exports.afficherPVPage = async (req, res) => {
                 sigle: groupeInfo.sigle,
                 parcour: structureAcademique.parcour
             },
-            type_filiere: groupeInfo.type_filiere,
+            type_filiere: groupeInfo.type_filiere,         // Type réel de la base de données
+            mode_affichage: modeAffichage,                 // Mode d'affichage déterminé
+            mode_calcul: modeCalcul,                       //  Mode utilisé pour les calculs
+            est_groupe_special: estGroupeSpecial,          // Indicateur pour la vue
             semestre: {
                 id: semestreId
             },
@@ -892,6 +932,7 @@ exports.afficherPVPage = async (req, res) => {
         };
         
         console.log('✅ Données prêtes pour rendu EJS');
+        console.log(` Mode d'affichage: ${modeAffichage} | Mode calcul: ${modeCalcul} (type réel: ${groupeInfo.type_filiere})`);
         
         // 7. Rendre la vue EJS avec les données
         res.render('pv', { 

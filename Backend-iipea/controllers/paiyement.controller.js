@@ -8,7 +8,8 @@ exports.createPaiement = async (req, res) => {
     const { etudiant_id, montant, methode, veut_kit_ecole, demande_pec, type_pec, pourcentage_reduction, reference_pec } = req.body;
     const userId = req.user.id;
     const userCode = req.user.code;
-    const date_paiement = new Date();
+    // const date_paiement = new Date();
+    const date_paiement = '2025-11-10';
     const kitAmount = 5000;
 
     // Validation des données d'entrée

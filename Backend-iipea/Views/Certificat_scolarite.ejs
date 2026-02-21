@@ -197,7 +197,7 @@
             min-width: 140px;
         }
         
-        /* Tableau informations académiques */
+        /* Tableau informations académiques horizontal */
         .academic-table-container {
             margin-bottom: 20px;
         }
@@ -209,11 +209,30 @@
             border: 1px solid #d9d9d9;
         }
         
+        .academic-table thead {
+            background-color: #f9f9f9;
+        }
+        
+        .academic-table th {
+            border: 1px solid #d9d9d9;
+            padding: 12px 10px;
+            font-size: 13px;
+            font-weight: bold;
+            text-align: left;
+            color: #003366;
+            background-color: #f0f8ff;
+        }
+        
         .academic-table td {
             border: 1px solid #d9d9d9;
-            padding: 10px;
+            padding: 12px 10px;
             font-size: 13px;
             vertical-align: top;
+        }
+        
+        .previous-year-row {
+            background-color: #f9f9f9;
+         
         }
         
         .table-label {
@@ -315,6 +334,12 @@
             opacity: 1;
         }
         
+        /* Styles pour données manquantes */
+        .data-missing {
+            color: #999;
+            font-style: italic;
+        }
+        
         /* Styles d'impression améliorés */
         @media print {
             body {
@@ -363,6 +388,11 @@
             
             .main-title-text {
                 font-size: 18px;
+            }
+            
+            .academic-table {
+                display: block;
+                overflow-x: auto;
             }
         }
     </style>
@@ -458,38 +488,65 @@
                         alt="Photo de <%= data.informations_personnelles.nom %> <%= data.informations_personnelles.prenoms %>" 
                         class="student-photo image-loading"
                         onload="this.classList.add('image-loaded'); this.nextElementSibling.style.display='none';"
-                        onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
+                        onerror="this.style.display='none'; this.nextElementSibling.style.display='none';"
                     >
-                    <div class="photo-placeholder photo-error">
-                        Photo<br>Non Disponible
+                    <div class="photo-placeholder photo-error" style="display: none;">
+                        <!-- Ne rien afficher quand la photo n'est pas disponible -->
                     </div>
                 <% } else { %>
-                    <div class="photo-placeholder" style="display: flex;">
-                        Photo<br>Non Disponible
-                    </div>
+                    <!-- Ne rien afficher quand la photo n'est pas disponible -->
                 <% } %>
             </div>
         </div>
 
-        <!-- Informations Académiques sous forme de tableau -->
+        <!-- Informations Académiques sous forme de tableau horizontal -->
         <div class="academic-table-container">
             <table class="academic-table">
-                <tr>
-                    <td class="table-label">Filière</td>
-                    <td class="table-value"><%= data.informations_academiques.filiere.nom %></td>
-                </tr>
-                <tr>
-                    <td class="table-label">Niveau</td>
-                    <td class="table-value"><%= data.informations_academiques.niveau.libelle %></td>
-                </tr>
-                <tr>
-                    <td class="table-label">Année académique</td>
-                    <td class="table-value"><%= data.informations_academiques.annee_academique.annee %></td>
-                </tr>
-                <tr>
-                    <td class="table-label">Date d'inscription</td>
-                    <td class="table-value"><%= data.date_inscription_formatee %></td>
-                </tr>
+                <thead>
+                    <tr>
+                        <th>Filière</th>
+                        <th>Niveau</th>
+                        <th>Année académique</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% 
+                    // Vérifier si le niveau est BTS 2
+                    var isBTS2 = false;
+                    var previousAcademicYear = '';
+                    
+                    if (data.informations_academiques.niveau.libelle && 
+                        data.informations_academiques.niveau.libelle.includes('BTS 2')) {
+                        isBTS2 = true;
+                        
+                        // Calculer l'année académique précédente (ex: 2024-2025 → 2023-2024)
+                        if (data.informations_academiques.annee_academique.annee) {
+                            var yearParts = data.informations_academiques.annee_academique.annee.split('-');
+                            if (yearParts.length === 2) {
+                                var startYear = parseInt(yearParts[0]);
+                                var endYear = parseInt(yearParts[1]);
+                                previousAcademicYear = (startYear - 1) + '-' + (endYear - 1);
+                            }
+                        }
+                    }
+                    %>
+                    
+                    <!-- Afficher la ligne BTS 1 si c'est BTS 2 -->
+                    <% if (isBTS2) { %>
+                    <tr class="previous-year-row">
+                        <td><%= data.informations_academiques.filiere.nom || '<span class="data-missing">Non spécifié</span>' %></td>
+                        <td>BTS 1</td>
+                        <td><%= previousAcademicYear || '<span class="data-missing">Non spécifié</span>' %></td>
+                    </tr>
+                    <% } %>
+                    
+                    <!-- Ligne actuelle (BTS 2 ou autre niveau) -->
+                    <tr>
+                        <td><%= data.informations_academiques.filiere.nom || '<span class="data-missing">Non spécifié</span>' %></td>
+                        <td><%= data.informations_academiques.niveau.libelle || '<span class="data-missing">Non spécifié</span>' %></td>
+                        <td><%= data.informations_academiques.annee_academique.annee || '<span class="data-missing">Non spécifié</span>' %></td>
+                    </tr>
+                </tbody>
             </table>
             
             <span class="conclusion-text">
@@ -583,7 +640,7 @@
                     this.style.display = 'none';
                     const errorPlaceholder = this.nextElementSibling;
                     if (errorPlaceholder && errorPlaceholder.classList.contains('photo-error')) {
-                        errorPlaceholder.style.display = 'flex';
+                        errorPlaceholder.style.display = 'none'; // Ne rien afficher
                     }
                 });
             });

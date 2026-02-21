@@ -214,6 +214,7 @@
         .rang-cell {
             font-weight: bold;
             background-color: #f0f0f0;
+            text-align: center;
         }
     </style>
 </head>
@@ -252,20 +253,14 @@
                 <!-- LIGNE 1: En-tête principal -->
                 <tr class="table-header header-row-1">
                     <th rowspan="4" width="2%">N°</th>
-                    
-                    <!-- Pour les filières professionnelles, on ajoute une colonne RANG -->
-                    <% if (data.type_filiere === 'Professionnelles' || data.type_filiere === 'professionnelles') { %>
-                        <th rowspan="4" width="2%">RANG</th>
-                    <% } %>
-                    
                     <th rowspan="4" width="7%">ÉTUDIANT</th>
                     
                     <% if (data.etudiants && data.etudiants.length > 0 && data.etudiants[0].ues) { 
                         data.etudiants[0].ues.forEach((ue) => { 
                             const matieresCount = ue.matieres.length; %>
                             
-                            <!-- AFFICHAGE CONDITIONNEL SELON LE TYPE DE FILIÈRE -->
-                            <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+                            <!-- 🔴 AFFICHAGE CONDITIONNEL SELON LE MODE D'AFFICHAGE -->
+                            <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                                 <!-- Universitaire: 2 colonnes par matière (CC + Examen) -->
                                 <th colspan="<%= (matieresCount * 2) + 1 %>" class="ue-header">
                                     <%= ue.libelle %>
@@ -281,8 +276,13 @@
                     
                     <th rowspan="4" width="2%">MOY.<br>GÉN.</th>
                     
-                    <!-- Affichage conditionnel des crédits -->
-                    <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+                    <!-- 🔴 Pour les filières professionnelles (mode d'affichage), on ajoute la colonne RANG après MOY.GÉN. -->
+                    <% if (data.mode_affichage === 'Professionnelles' || data.mode_affichage === 'professionnelles') { %>
+                        <th rowspan="4" width="2%">RANG</th>
+                    <% } %>
+                    
+                    <!-- 🔴 Affichage conditionnel des crédits (si mode universitaire) -->
+                    <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                         <th rowspan="4" width="3%">CRÉDITS<br>V/T</th>
                     <% } %>
                     
@@ -295,8 +295,8 @@
                         data.etudiants[0].ues.forEach((ue) => { 
                             ue.matieres.forEach((matiere) => { %>
                                 
-                                <!-- AFFICHAGE CONDITIONNEL -->
-                                <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+                                <!-- 🔴 AFFICHAGE CONDITIONNEL -->
+                                <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                                     <!-- Universitaire: chaque matière prend 2 colonnes -->
                                     <th class="matiere-header" colspan="2" title="<%= matiere.nom %>">
                                         <%= matiere.nom %>
@@ -320,8 +320,8 @@
                         data.etudiants[0].ues.forEach((ue) => { 
                             ue.matieres.forEach(() => { %>
                                 
-                                <!-- AFFICHAGE CONDITIONNEL -->
-                                <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+                                <!-- 🔴 AFFICHAGE CONDITIONNEL -->
+                                <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                                     <!-- Universitaire: CC et Exam -->
                                     <th class="note-type-header">CC</th>
                                     <th class="note-type-header">Exam</th>
@@ -341,8 +341,8 @@
                         data.etudiants[0].ues.forEach((ue) => { 
                             ue.matieres.forEach((matiere) => { %>
                                 
-                                <!-- AFFICHAGE CONDITIONNEL -->
-                                <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+                                <!-- 🔴 AFFICHAGE CONDITIONNEL -->
+                                <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                                     <!-- Universitaire: coefficient sur 2 colonnes -->
                                     <th class="note-type-header" colspan="2">credit: <%= matiere.coefficient %></th>
                                 <% } else { %>
@@ -359,13 +359,8 @@
             <tbody>
                 <% data.etudiants.forEach((etudiant, etudiantIndex) => { %>
                 <tr class="student-row">
-                    <!-- Numéro -->
+                    <!-- Numéro (ordre alphabétique) -->
                     <td><%= etudiantIndex + 1 %></td>
-                    
-                    <!-- RANG (pour filières professionnelles) -->
-                    <% if (data.type_filiere === 'Professionnelles' || data.type_filiere === 'professionnelles') { %>
-                        <td class="rang-cell"><%= etudiantIndex + 1 %></td>
-                    <% } %>
                     
                     <!-- Colonne étudiant -->
                     <td class="student-info">
@@ -377,8 +372,8 @@
                     <% etudiant.ues.forEach((ue) => { 
                         ue.matieres.forEach((matiere) => { %>
                             
-                            <!-- AFFICHAGE CONDITIONNEL DES NOTES -->
-                            <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+                            <!-- 🔴 AFFICHAGE CONDITIONNEL DES NOTES SELON LE MODE D'AFFICHAGE -->
+                            <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                                 <!-- Universitaire: CC et Exam séparés -->
                                 <!-- Colonne CC = moyenne de note1 et note2 -->
                                 <td class="note-cell">
@@ -435,8 +430,15 @@
                         <strong><%= etudiant.moyenne_generale %></strong>
                     </td>
                     
-                    <!-- Crédits (uniquement pour universitaire) -->
-                    <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+                    <!-- 🔴 RANG (UNIQUEMENT si le mode d'affichage est professionnel) -->
+                    <% if (data.mode_affichage === 'Professionnelles' || data.mode_affichage === 'professionnelles') { %>
+                        <td class="rang-cell">
+                            <%= etudiant.rang ? etudiant.rang + 'ᵉ' : '-' %>
+                        </td>
+                    <% } %>
+                    
+                    <!-- 🔴 Crédits (UNIQUEMENT si le mode d'affichage est universitaire) -->
+                    <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                         <td class="note-cell">
                             <%= etudiant.credits_valides %>/<%= etudiant.credits_total %>
                         </td>
@@ -452,12 +454,12 @@
         </table>
     </div>
 
-    <!-- Légende conditionnelle -->
+    <!-- Légende conditionnelle selon le mode d'affichage -->
     <div class="legend">
         <p>
             <span><strong>Légende:</strong></span>
             
-            <% if (data.type_filiere === 'Universitaire' || data.type_filiere === 'universitaire') { %>
+            <% if (data.mode_affichage === 'Universitaire' || data.mode_affichage === 'universitaire') { %>
                 <span>CC = Moyenne (note1 + note2)/2</span>
                 <span>Exam = Note partiel</span>
             <% } else { %>
@@ -469,6 +471,11 @@
             <span>- = Note non disponible</span>
             <span style="color: #006600;">Vert = Note ≥ 10</span>
             <span style="color: #cc0000;">Rouge = Note < 10</span>
+            
+            <!-- 🔴 Indication pour les groupes spéciaux -->
+            <% if (data.est_groupe_special) { %>
+                <span style="color: #0066cc;">* Groupe spécial (affichage universitaire)</span>
+            <% } %>
         </p>
         <p>
             <strong>Total:</strong> 

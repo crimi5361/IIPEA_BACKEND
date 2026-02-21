@@ -35,39 +35,57 @@ exports.getDashboardStats = async (req, res) => {
       WHERE annee_academique_id = $1 AND departement_id = $2 AND standing = 'en attente'
     `, [anneeAcademiqueId, departementId]);
     results.totalEnAttente = parseInt(enAttente.rows[0].total);
+// 3. Montant total scolarité
+const scolariteTotale = await db.query(`
+  SELECT COALESCE(SUM(s.montant_scolarite), 0) AS total
+  FROM etudiant e
+  JOIN scolarite s ON s.id = e.scolarite_id
+  WHERE e.annee_academique_id = $1 
+    AND e.departement_id = $2 
+    AND e.standing = 'Inscrit'
+`, [anneeAcademiqueId, departementId]);
 
-    // 3. Montant total scolarité (ouverte)
-    const scolariteTotale = await db.query(`
-      SELECT COALESCE(SUM(s.montant_scolarite), 0) AS total
-      FROM etudiant e
-      JOIN scolarite s ON s.id = e.scolarite_id
-      WHERE e.annee_academique_id = $1 AND e.departement_id = $2 AND e.standing = 'Inscrit'
-    `, [anneeAcademiqueId, departementId]);
-    results.totalScolarite = parseFloat(scolariteTotale.rows[0].total);
+results.totalScolarite = parseFloat(scolariteTotale.rows[0].total);
 
-    // 4. Montant total réellement versé (paiements)
-    const scolariteVersee = await db.query(`
-      SELECT COALESCE(SUM(p.montant), 0) AS total
-      FROM paiement p
-      JOIN etudiant e ON e.id = p.etudiant_id
-      WHERE e.annee_academique_id = $1 AND e.departement_id = $2 AND e.standing = 'Inscrit'
-    `, [anneeAcademiqueId, departementId]);
-    results.totalVerse = parseFloat(scolariteVersee.rows[0].total);
 
-    // 5. Montant total réduction (prise en charge valide)
-    const totalReduction = await db.query(`
-      SELECT COALESCE(SUM(r.montant_reduction), 0) AS total
-      FROM prise_en_charge r
-      JOIN etudiant e ON r.etudiant_id = e.id
-      WHERE e.annee_academique_id = $1 
-        AND e.departement_id = $2 
-        AND e.standing = 'Inscrit' 
-        AND r.statut = 'valide'
-    `, [anneeAcademiqueId, departementId]);
-    results.totalReduction = parseFloat(totalReduction.rows[0].total);
+// 4. Montant total réellement versé
+const scolariteVersee = await db.query(`
+  SELECT COALESCE(SUM(p.montant), 0) AS total
+  FROM paiement p
+  JOIN etudiant e ON e.id = p.etudiant_id
+  WHERE e.annee_academique_id = $1 
+    AND e.departement_id = $2 
+    AND e.standing = 'Inscrit'
+`, [anneeAcademiqueId, departementId]);
 
-    // 6. Montant restant = totale - versé - réduction
-    results.totalRestant = results.totalScolarite - results.totalVerse - results.totalReduction;
+results.totalVerse = parseFloat(scolariteVersee.rows[0].total);
+
+
+// 5. Montant total réduction (info statistique seulement)
+const totalReduction = await db.query(`
+  SELECT COALESCE(SUM(r.montant_reduction), 0) AS total
+  FROM prise_en_charge r
+  JOIN etudiant e ON r.etudiant_id = e.id
+  WHERE e.annee_academique_id = $1 
+    AND e.departement_id = $2 
+    AND e.standing = 'Inscrit' 
+    AND r.statut = 'valide'
+`, [anneeAcademiqueId, departementId]);
+
+results.totalReduction = parseFloat(totalReduction.rows[0].total);
+
+
+// ✅ 6. Montant restant OFFICIEL (corrigé)
+const totalRestant = await db.query(`
+  SELECT COALESCE(SUM(s.scolarite_restante), 0) AS total
+  FROM etudiant e
+  JOIN scolarite s ON s.id = e.scolarite_id
+  WHERE e.annee_academique_id = $1 
+    AND e.departement_id = $2 
+    AND e.standing = 'Inscrit'
+`, [anneeAcademiqueId, departementId]);
+
+results.totalRestant = parseFloat(totalRestant.rows[0].total);
 
     // 7. Nombre de classes
     const nbClasses = await db.query(`
