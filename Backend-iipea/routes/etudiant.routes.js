@@ -32,6 +32,8 @@ router.post(
   etudiantController.getEtudiantsByDepartement
 );
 
+router.post('/ExportEtudiants',authenticateToken, etudiantController.exportEtudiantsByDepartement);
+
 router.get(
   '/EtudiantsByDepartementEnattente',
   authenticateToken,

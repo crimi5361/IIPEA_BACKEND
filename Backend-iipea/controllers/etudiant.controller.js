@@ -592,6 +592,171 @@ exports.getEtudiantsByDepartement = async (req, res) => {
     });
   }
 };
+
+//===============================Fcontion d'exportation =======================================================
+// Controller pour l'exportation des étudiants (sans pagination, pour Excel)
+exports.exportEtudiantsByDepartement = async (req, res) => {
+  try {
+    const departementId = req.query.departement_id || req.user?.departement_id;
+    const { anneeAcademiqueId } = req.query;
+    const searchTerm = req.query.search || '';
+    
+    if (!departementId) {
+      return res.status(400).json({
+        success: false,
+        message: "ID du département requis",
+        code: "DEPARTMENT_ID_REQUIRED"
+      });
+    }
+
+    // Validation de l'année académique
+    if (!anneeAcademiqueId) {
+      return res.status(400).json({
+        success: false,
+        message: "L'ID de l'année académique est requis",
+        code: "ACADEMIC_YEAR_REQUIRED"
+      });
+    }
+
+    // Vérifier que l'année académique existe
+    const yearCheck = await db.query(
+      `SELECT id, annee, etat FROM anneeacademique WHERE id = $1`,
+      [anneeAcademiqueId]
+    );
+
+    if (yearCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Année académique non trouvée",
+        code: "ACADEMIC_YEAR_NOT_FOUND"
+      });
+    }
+
+    // Construction dynamique de la clause WHERE (mêmes filtres que getEtudiantsByDepartement)
+    let whereClauses = ['e.departement_id = $1', 'e.annee_academique_id = $2'];
+    let params = [departementId, anneeAcademiqueId];
+    let paramCounter = 3;
+
+    // Filtre par standing (par défaut 'Inscrit')
+    const standingFilter = req.query.standing || 'Inscrit';
+    whereClauses.push(`e.standing = $${paramCounter}`);
+    params.push(standingFilter);
+    paramCounter++;
+
+    // Filtre par filière si fourni
+    if (req.query.filiere) {
+      whereClauses.push(`f.nom = $${paramCounter}`);
+      params.push(req.query.filiere);
+      paramCounter++;
+    }
+    
+    // Filtre par niveau si fourni
+    if (req.query.niveau) {
+      whereClauses.push(`n.libelle = $${paramCounter}`);
+      params.push(req.query.niveau);
+      paramCounter++;
+    }
+
+    // Recherche textuelle si fournie
+    if (searchTerm) {
+      whereClauses.push(`(
+        e.nom ILIKE $${paramCounter} OR 
+        e.prenoms ILIKE $${paramCounter} OR 
+        e.matricule ILIKE $${paramCounter} OR 
+        e.code_unique ILIKE $${paramCounter} OR 
+        e.matricule_iipea ILIKE $${paramCounter} OR 
+        f.nom ILIKE $${paramCounter} OR 
+        f.sigle ILIKE $${paramCounter} OR 
+        e.telephone ILIKE $${paramCounter} OR 
+        e.nationalite ILIKE $${paramCounter}
+      )`);
+      params.push(`%${searchTerm}%`);
+      paramCounter++;
+    }
+
+    const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
+
+    // Requête d'exportation simplifiée (sans les champs de documents pour éviter les doublons)
+    const exportQuery = `
+      SELECT 
+        e.id,
+        e.matricule,
+        e.nom,
+        e.prenoms,
+        e.date_naissance,
+        e.lieu_naissance,
+        e.telephone,
+        e.email,
+        e.contact_parent,
+        e.contact_parent_2,
+        e.code_unique,
+        e.ip_ministere,
+        e.matricule_iipea,
+        e.statut_scolaire,
+        e.date_inscription,
+        e.nationalite,
+        e.standing,
+        e.sexe,
+        
+        f.nom AS filiere,
+        f.sigle AS filiere_sigle,
+        
+        n.libelle AS niveau,
+        
+        a.annee AS annee_academique,
+        a.etat AS etat_annee,
+        
+        c.type_parcours,
+        
+        g.nom AS groupe_nom,
+        
+        COALESCE(s.montant_scolarite, 0) AS montant_total_scolarite,
+        COALESCE(s.scolarite_verse, 0) AS montant_paye,
+        COALESCE(s.scolarite_restante, 0) AS montant_restant,
+        s.statut_etudiant,
+        
+        -- Calcul du pourcentage payé
+        CASE 
+          WHEN s.montant_scolarite IS NULL OR s.montant_scolarite = 0 THEN 0
+          ELSE ROUND((COALESCE(s.scolarite_verse, 0) / s.montant_scolarite) * 100, 2)
+        END AS pourcentage_paye
+        
+      FROM etudiant e
+      JOIN filiere f ON e.id_filiere = f.id
+      JOIN niveau n ON e.niveau_id = n.id
+      JOIN anneeacademique a ON e.annee_academique_id = a.id
+      JOIN departement d ON e.departement_id = d.id
+      LEFT JOIN scolarite s ON e.scolarite_id = s.id
+      LEFT JOIN groupe g ON e.groupe_id = g.id
+      LEFT JOIN curcus c ON e.curcus_id = c.id
+      ${whereClause}
+      ORDER BY e.nom ASC, e.prenoms ASC
+    `;
+
+    // Exécution de la requête (sans pagination)
+    const result = await db.query(exportQuery, params);
+
+    return res.status(200).json({
+      success: true,
+      data: result.rows,
+      total: result.rows.length,
+      anneeAcademique: {
+        id: anneeAcademiqueId,
+        annee: yearCheck.rows[0].annee,
+        etat: yearCheck.rows[0].etat
+      }
+    });
+
+  } catch (err) {
+    console.error("Erreur exportation étudiants:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Erreur serveur",
+      code: "SERVER_ERROR",
+      details: err.message
+    });
+  }
+};
 //==============================================================================================================
 
 exports.getEtudiantsByDepartementEnAttente = async (req, res) => {

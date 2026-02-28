@@ -288,7 +288,6 @@ async function getMatiereInfo(matiereId) {
 }
 
 // FONCTION CORRIGÉE : Récupérer ou mettre à jour un enseignement existant
-// Si un enseignement existe déjà pour cette matière, groupe et année, on le met à jour avec le nouveau professeur
 async function getOrUpdateEnseignement(professeurId, matiereId, groupeId, anneeAcademique) {
   try {
     console.log(`🎯 Recherche/mise à jour enseignement: matiere=${matiereId}, groupe=${groupeId}, année=${anneeAcademique}`);
@@ -599,9 +598,9 @@ function parseExcelFile(filePath, noteTypes) {
         nom: nomValue ? nomValue.toString().trim() : '',
         prenom: prenomValue ? prenomValue.toString().trim() : '',
         ligne: i + 1,
-        note_1: 0,
-        note_2: 0,
-        partiel: 0
+        note_1: null,
+        note_2: null,
+        partiel: null
       };
       
       noteColumns.forEach(noteCol => {
@@ -611,20 +610,39 @@ function parseExcelFile(filePath, noteTypes) {
           if (typeof noteValue === 'string') {
             noteValue = noteValue.replace(',', '.').trim().toUpperCase();
             
-            if (noteValue === '' || noteValue === '-' || noteValue === 'ABS' || 
-                noteValue === 'ABSENT' || noteValue === 'ABJ' || noteValue === 'ABANDON' ||
-                noteValue === 'N/A' || noteValue === 'NULL' || noteValue === 'NA') {
-              noteValue = 0;
+            // RÈGLES DE CONVERSION:
+            // - Si c'est vide ou ABSENT, etc. = null (non évalué)
+            // - Si c'est "-" = 0 (évalué mais a eu 0)
+            // - Si c'est un nombre = la note
+            
+            if (noteValue === '' || noteValue === 'ABS' || 
+                noteValue === 'ABSENT' || noteValue === 'ABJ' || 
+                noteValue === 'ABANDON' || noteValue === 'N/A' || 
+                noteValue === 'NULL' || noteValue === 'NA') {
+              student[noteCol.type] = null;
+            }
+            else if (noteValue === '-') {
+              student[noteCol.type] = 0; // ← "-" devient 0
+            }
+            else {
+              const noteNum = parseFloat(noteValue);
+              if (!isNaN(noteNum) && isFinite(noteNum)) {
+                student[noteCol.type] = noteNum;
+              } else {
+                student[noteCol.type] = null;
+              }
             }
           }
-          
-          if (noteValue instanceof Date) {
-            noteValue = noteValue.getTime();
+          else if (noteValue instanceof Date) {
+            student[noteCol.type] = null;
           }
-          
-          const noteNum = parseFloat(noteValue);
-          if (!isNaN(noteNum) && isFinite(noteNum)) {
-            student[noteCol.type] = noteNum;
+          else {
+            const noteNum = parseFloat(noteValue);
+            if (!isNaN(noteNum) && isFinite(noteNum)) {
+              student[noteCol.type] = noteNum;
+            } else {
+              student[noteCol.type] = null;
+            }
           }
         }
       });
@@ -688,128 +706,303 @@ function findEtudiantByMatriculeIipea(etudiants, matriculeIipea) {
   return null;
 }
 
-
-function calculerMoyenne(note1, note2, partiel, matiereInfo) {
-  const {
-    type_evaluation = 'note_1_note_2_partiel',
-    active_notes = { note1: true, note2: true, partiel: true },
-    type_filiere = 'Universitaire'
-  } = matiereInfo;
+// ================= FONCTION DE CALCUL CORRIGÉE =================
+/**
+ * Calcule la moyenne selon les règles universitaires :
+ * - Si note = null : la note n'est PAS prise en compte (non évalué)
+ * - Si note = 0 : la note est prise en compte avec sa pondération (l'étudiant a eu 0)
+ * - Pondérations selon le type d'évaluation :
+ *   - note_1_note_2_partiel : Note1=20%, Note2=20%, Partiel=60% (somme directe)
+ *   - note_1_partiel : Note1=40%, Partiel=60% (somme directe)
+ *   - note_2_partiel : Note2=40%, Partiel=60% (somme directe)
+ *   - partiel_only : Partiel=100%
+ *   - note_1_note_2 : Note1=50%, Note2=50%
+ *   - note_1_only : Note1=100%
+ *   - note_2_only : Note2=100%
+ */
+function calculerMoyenne(note1, note2, partiel, typeEvaluation, typeFiliere = 'Universitaire') {
+  console.log('\n🔍 ===== DÉBUT CALCUL MOYENNE =====');
   
-  const isUniversitaire = type_filiere === 'Universitaire';
+  console.log('📋 Paramètres reçus:');
+  console.log(`   - type_evaluation: "${typeEvaluation}"`);
+  console.log(`   - type_filiere: "${typeFiliere}"`);
+  console.log(`   - notes brutes - note1:`, note1, `note2:`, note2, `partiel:`, partiel);
   
-  // Convertir en nombres
-  const n1 = parseFloat(note1) || 0;
-  const n2 = parseFloat(note2) || 0;
-  const p = parseFloat(partiel) || 0;
+  const isUniversitaire = typeFiliere === 'Universitaire' || typeFiliere === 'universitaire';
   
-  console.log(`📊 Calcul moyenne: ${type_evaluation}, notes: ${n1}/${n2}/${p}`);
+  // IMPORTANT: null = non saisie (ne pas prendre en compte)
+  //            nombre = note saisie (peut être 0)
+  const n1 = (note1 !== null && note1 !== undefined) ? parseFloat(note1) : null;
+  const n2 = (note2 !== null && note2 !== undefined) ? parseFloat(note2) : null;
+  const p = (partiel !== null && partiel !== undefined) ? parseFloat(partiel) : null;
   
-  // Règle 1: Si une seule note est active, c'est la moyenne
-  const activeNoteTypes = [];
-  if (active_notes.note1 && n1 > 0) activeNoteTypes.push('note1');
-  if (active_notes.note2 && n2 > 0) activeNoteTypes.push('note2');
-  if (active_notes.partiel && p > 0) activeNoteTypes.push('partiel');
+  console.log(`📊 Notes parsées - n1: ${n1}, n2: ${n2}, p: ${p}`);
   
-  if (activeNoteTypes.length === 0) return 0;
-  if (activeNoteTypes.length === 1) {
-    if (activeNoteTypes[0] === 'note1') return n1;
-    if (activeNoteTypes[0] === 'note2') return n2;
-    if (activeNoteTypes[0] === 'partiel') return p;
+  // DÉTERMINER LES NOTES ACTIVES EN FONCTION DU TYPE D'ÉVALUATION
+  let active_notes = { note1: false, note2: false, partiel: false };
+  
+  switch(typeEvaluation) {
+    case 'note_1_note_2_partiel':
+      active_notes = { note1: true, note2: true, partiel: true };
+      console.log(`✅ Type: note_1_note_2_partiel → toutes notes actives`);
+      break;
+    case 'note_1_partiel':
+      active_notes = { note1: true, note2: false, partiel: true };
+      console.log(`✅ Type: note_1_partiel → Note1 et Partiel actifs`);
+      break;
+    case 'note_2_partiel':
+      active_notes = { note1: false, note2: true, partiel: true };
+      console.log(`✅ Type: note_2_partiel → Note2 et Partiel actifs`);
+      break;
+    case 'partiel_only':
+      active_notes = { note1: false, note2: false, partiel: true };
+      console.log(`✅ Type: partiel_only → seulement Partiel actif`);
+      break;
+    case 'note_1_note_2':
+      active_notes = { note1: true, note2: true, partiel: false };
+      console.log(`✅ Type: note_1_note_2 → Note1 et Note2 actifs`);
+      break;
+    case 'note_1_only':
+      active_notes = { note1: true, note2: false, partiel: false };
+      console.log(`✅ Type: note_1_only → seulement Note1 actif`);
+      break;
+    case 'note_2_only':
+      active_notes = { note1: false, note2: true, partiel: false };
+      console.log(`✅ Type: note_2_only → seulement Note2 actif`);
+      break;
+    default:
+      active_notes = { note1: true, note2: true, partiel: true };
+      console.log(`⚠️ Type inconnu "${typeEvaluation}", fallback toutes notes actives`);
   }
   
-  let moyenne = 0;
+  console.log(`   Notes actives déterminées: note1=${active_notes.note1}, note2=${active_notes.note2}, partiel=${active_notes.partiel}`);
   
-  switch(type_evaluation) {
-    case 'partiel_only':
-    case 'note_1_only':
-    case 'note_2_only':
-      if (type_evaluation === 'note_1_only' && n1 > 0) return n1;
-      if (type_evaluation === 'note_2_only' && n2 > 0) return n2;
-      if (type_evaluation === 'partiel_only' && p > 0) return p;
-      return 0;
-      
-    case 'note_1_note_2':
-      // Moyenne simple des 2 notes
-      if (n1 > 0 && n2 > 0) {
-        moyenne = (n1 + n2) / 2;
-      } else if (n1 > 0) moyenne = n1;
-      else if (n2 > 0) moyenne = n2;
-      break;
-      
-    case 'note_1_partiel':
-      if (n1 > 0 && p > 0) {
-        if (isUniversitaire) {
-          // 40% note1 + 60% partiel
-          moyenne = (n1 * 0.4) + (p * 0.6);
-        } else {
-          // 50% note1 + 50% partiel
-          moyenne = (n1 * 0.5) + (p * 0.5);
-        }
-      } else if (n1 > 0) moyenne = n1;
-      else if (p > 0) moyenne = p;
-      break;
-      
-    case 'note_2_partiel':
-      if (n2 > 0 && p > 0) {
-        if (isUniversitaire) {
-          // 40% note2 + 60% partiel
-          moyenne = (n2 * 0.4) + (p * 0.6);
-        } else {
-          // 50% note2 + 50% partiel
-          moyenne = (n2 * 0.5) + (p * 0.5);
-        }
-      } else if (n2 > 0) moyenne = n2;
-      else if (p > 0) moyenne = p;
-      break;
-      
-    case 'note_1_note_2_partiel':
-    default:
-      // CORRECTION : 20% note1 + 20% note2 + 60% partiel (SANS division par totalPoids)
-      if (isUniversitaire) {
-        // Version simple et correcte :
-        let total = 0;
-        let poidsTotal = 0;
+  // CAS UNIVERSITAIRE (avec pondérations)
+  if (isUniversitaire) {
+    let totalPondere = 0;
+    let poidsTotal = 0;
+    
+    console.log(`\n📐 Application des pondérations pour "${typeEvaluation}":`);
+    
+    // PONDÉRATIONS selon le type d'évaluation
+    switch(typeEvaluation) {
+      case 'note_1_note_2_partiel':
+        console.log(`   → Règle: Note1(20%) + Note2(20%) + Partiel(60%)`);
         
-        if (active_notes.note1 && n1 > 0) {
-          total += n1 * 0.2;
+        if (active_notes.note1 && n1 !== null) {
+          const contribution = n1 * 0.2;
+          totalPondere += contribution;
           poidsTotal += 0.2;
+          console.log(`     ✓ Note1: ${n1} × 0.2 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.note1) {
+          console.log(`     ✗ Note1: non saisie`);
         }
-        if (active_notes.note2 && n2 > 0) {
-          total += n2 * 0.2;
+        
+        if (active_notes.note2 && n2 !== null) {
+          const contribution = n2 * 0.2;
+          totalPondere += contribution;
           poidsTotal += 0.2;
+          console.log(`     ✓ Note2: ${n2} × 0.2 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.note2) {
+          console.log(`     ✗ Note2: non saisie`);
         }
-        if (active_notes.partiel && p > 0) {
-          total += p * 0.6;
+        
+        if (active_notes.partiel && p !== null) {
+          const contribution = p * 0.6;
+          totalPondere += contribution;
           poidsTotal += 0.6;
+          console.log(`     ✓ Partiel: ${p} × 0.6 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.partiel) {
+          console.log(`     ✗ Partiel: non saisie`);
+        }
+        break;
+        
+      case 'note_1_partiel':
+        console.log(`   → Règle: Note1(40%) + Partiel(60%)`);
+        
+        if (active_notes.note1 && n1 !== null) {
+          const contribution = n1 * 0.4;
+          totalPondere += contribution;
+          poidsTotal += 0.4;
+          console.log(`     ✓ Note1: ${n1} × 0.4 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.note1) {
+          console.log(`     ✗ Note1: non saisie`);
         }
         
-        // Si certaines notes sont manquantes, répartir les poids
-        if (poidsTotal > 0 && poidsTotal < 1.0) {
-          // Normaliser les poids
-          total = total / poidsTotal;
-          poidsTotal = 1.0;
+        if (active_notes.partiel && p !== null) {
+          const contribution = p * 0.6;
+          totalPondere += contribution;
+          poidsTotal += 0.6;
+          console.log(`     ✓ Partiel: ${p} × 0.6 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.partiel) {
+          console.log(`     ✗ Partiel: non saisie`);
+        }
+        break;
+        
+      case 'note_2_partiel':
+        console.log(`   → Règle: Note2(40%) + Partiel(60%)`);
+        
+        if (active_notes.note2 && n2 !== null) {
+          const contribution = n2 * 0.4;
+          totalPondere += contribution;
+          poidsTotal += 0.4;
+          console.log(`     ✓ Note2: ${n2} × 0.4 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.note2) {
+          console.log(`     ✗ Note2: non saisie`);
         }
         
-        moyenne = total;  // Pas de division ici !
-        console.log(`  Calcul Univ: ${n1}×0.2 + ${n2}×0.2 + ${p}×0.6 = ${moyenne}`);
+        if (active_notes.partiel && p !== null) {
+          const contribution = p * 0.6;
+          totalPondere += contribution;
+          poidsTotal += 0.6;
+          console.log(`     ✓ Partiel: ${p} × 0.6 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.partiel) {
+          console.log(`     ✗ Partiel: non saisie`);
+        }
+        break;
         
-      } else {
-        // PROFESSIONNEL: Moyenne simple
+      case 'partiel_only':
+        console.log(`   → Règle: Partiel(100%)`);
+        
+        if (active_notes.partiel && p !== null) {
+          console.log(`     ✓ Partiel seul: ${p}`);
+          console.log(`   ✅ Moyenne finale: ${p}`);
+          console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+          return Math.round(p * 100) / 100;
+        }
+        console.log(`     ✗ Partiel: non saisi`);
+        console.log(`   ✅ Moyenne finale: 0`);
+        console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+        return 0;
+        
+      case 'note_1_note_2':
+        console.log(`   → Règle: Note1(50%) + Note2(50%)`);
+        
+        if (active_notes.note1 && n1 !== null) {
+          const contribution = n1 * 0.5;
+          totalPondere += contribution;
+          poidsTotal += 0.5;
+          console.log(`     ✓ Note1: ${n1} × 0.5 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.note1) {
+          console.log(`     ✗ Note1: non saisie`);
+        }
+        
+        if (active_notes.note2 && n2 !== null) {
+          const contribution = n2 * 0.5;
+          totalPondere += contribution;
+          poidsTotal += 0.5;
+          console.log(`     ✓ Note2: ${n2} × 0.5 = ${contribution.toFixed(2)}`);
+        } else if (active_notes.note2) {
+          console.log(`     ✗ Note2: non saisie`);
+        }
+        break;
+        
+      case 'note_1_only':
+        console.log(`   → Règle: Note1(100%)`);
+        
+        if (active_notes.note1 && n1 !== null) {
+          console.log(`     ✓ Note1 seule: ${n1}`);
+          console.log(`   ✅ Moyenne finale: ${n1}`);
+          console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+          return Math.round(n1 * 100) / 100;
+        }
+        console.log(`     ✗ Note1: non saisie`);
+        console.log(`   ✅ Moyenne finale: 0`);
+        console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+        return 0;
+        
+      case 'note_2_only':
+        console.log(`   → Règle: Note2(100%)`);
+        
+        if (active_notes.note2 && n2 !== null) {
+          console.log(`     ✓ Note2 seule: ${n2}`);
+          console.log(`   ✅ Moyenne finale: ${n2}`);
+          console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+          return Math.round(n2 * 100) / 100;
+        }
+        console.log(`     ✗ Note2: non saisie`);
+        console.log(`   ✅ Moyenne finale: 0`);
+        console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+        return 0;
+        
+      default:
+        console.log(`⚠️ Type non reconnu "${typeEvaluation}", fallback moyenne simple`);
+        // Fallback: moyenne simple des notes actives présentes
         const notesValides = [];
-        if (active_notes.note1 && n1 > 0) notesValides.push(n1);
-        if (active_notes.note2 && n2 > 0) notesValides.push(n2);
-        if (active_notes.partiel && p > 0) notesValides.push(p);
+        if (n1 !== null) notesValides.push(n1);
+        if (n2 !== null) notesValides.push(n2);
+        if (p !== null) notesValides.push(p);
+        
+        if (notesValides.length === 0) {
+          console.log(`   ✅ Moyenne finale: 0 (aucune note)`);
+          console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+          return 0;
+        }
         
         const somme = notesValides.reduce((acc, note) => acc + note, 0);
-        moyenne = notesValides.length > 0 ? somme / notesValides.length : 0;
-      }
+        const moyenne = somme / notesValides.length;
+        console.log(`   ✓ Notes valides: ${notesValides.join(', ')}`);
+        console.log(`   ✓ Calcul: ${somme} / ${notesValides.length} = ${moyenne.toFixed(2)}`);
+        console.log(`   ✅ Moyenne finale: ${moyenne.toFixed(2)}`);
+        console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+        return Math.round(moyenne * 100) / 100;
+    }
+    
+    // Si aucune note active n'est présente
+    if (poidsTotal === 0) {
+      console.log(`   ⚠️ Aucune note active présente`);
+      console.log(`   ✅ Moyenne finale: 0`);
+      console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+      return 0;
+    }
+    
+    // Calculer la moyenne
+    let moyenne;
+    if (poidsTotal === 1.0) {
+      // Toutes les notes sont présentes, pas de normalisation
+      moyenne = totalPondere;
+      console.log(`\n📊 Toutes notes présentes (poids total = 100%)`);
+      console.log(`   → Moyenne = ${totalPondere.toFixed(2)}`);
+    } else {
+      // Certaines notes sont manquantes, normalisation
+      moyenne = totalPondere / poidsTotal;
+      console.log(`\n📊 Normalisation (poids total = ${(poidsTotal * 100).toFixed(0)}%)`);
+      console.log(`   → Total pondéré: ${totalPondere.toFixed(2)}`);
+      console.log(`   → Poids total: ${poidsTotal}`);
+      console.log(`   → Moyenne normalisée: ${totalPondere.toFixed(2)} / ${poidsTotal} = ${moyenne.toFixed(2)}`);
+    }
+    
+    console.log(`   ✅ Moyenne finale: ${moyenne.toFixed(2)}`);
+    console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+    
+    return Math.round(moyenne * 100) / 100;
   }
   
-  console.log(`✅ Moyenne: ${moyenne}`);
-  return moyenne;
+  // CAS PROFESSIONNEL (moyenne simple)
+  else {
+    console.log(`\n🏢 Mode professionnel - moyenne simple`);
+    const notesValides = [];
+    if (n1 !== null) notesValides.push(n1);
+    if (n2 !== null) notesValides.push(n2);
+    if (p !== null) notesValides.push(p);
+    
+    if (notesValides.length === 0) {
+      console.log(`   ⚠️ Aucune note valide`);
+      console.log(`   ✅ Moyenne finale: 0`);
+      console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+      return 0;
+    }
+    
+    const somme = notesValides.reduce((acc, note) => acc + note, 0);
+    const moyenne = somme / notesValides.length;
+    console.log(`   ✓ Notes valides: ${notesValides.join(', ')}`);
+    console.log(`   ✓ Calcul: ${somme} / ${notesValides.length} = ${moyenne.toFixed(2)}`);
+    console.log(`   ✅ Moyenne finale: ${moyenne.toFixed(2)}`);
+    console.log('🔍 ===== FIN CALCUL MOYENNE =====\n');
+    
+    return Math.round(moyenne * 100) / 100;
+  }
 }
-
 
 // Vérifier si une note existe déjà pour un étudiant dans un enseignement donné
 async function checkExistingNote(etudiantId, enseignementId, sessionId) {
@@ -824,7 +1017,6 @@ async function checkExistingNote(etudiantId, enseignementId, sessionId) {
   }
 }
 
-// Insérer ou mettre à jour une note
 // Insérer ou mettre à jour une note - VERSION CORRIGÉE
 async function upsertNote(noteData, fichierSource, noteId = null) {
   try {
@@ -838,7 +1030,7 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
     
     // VALIDATION ET NORMALISATION DES DONNÉES
     const validateAndFormat = (value) => {
-      if (value === null || value === undefined || value === '') {
+      if (value === null || value === undefined) {
         return null; // NULL pour PostgreSQL
       }
       
@@ -857,7 +1049,7 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
       return rounded;
     };
     
-    // Formater les notes
+    // Formater les notes - IMPORTANT: ne pas convertir null en 0
     const note1 = validateAndFormat(noteData.note1);
     const note2 = validateAndFormat(noteData.note2);
     const partiel = validateAndFormat(noteData.partiel);
@@ -923,13 +1115,13 @@ async function upsertNote(noteData, fichierSource, noteId = null) {
 // Fonction utilitaire pour décrire le type d'évaluation
 function getDescriptionTypeEvaluation(type) {
   const descriptions = {
-    'note_1_note_2_partiel': "Contrôles continus (CC1, CC2) + Examen final",
-    'note_1_partiel': "Premier contrôle continu + Examen final",
-    'note_2_partiel': "Deuxième contrôle continu + Examen final",
-    'partiel_only': "Examen final seulement",
-    'note_1_note_2': "Deux contrôles continus seulement",
-    'note_1_only': "Premier contrôle continu seulement",
-    'note_2_only': "Deuxième contrôle continu seulement"
+    'note_1_note_2_partiel': "Contrôles continus (CC1:20%, CC2:20%) + Examen final (60%)",
+    'note_1_partiel': "Contrôle continu (CC1:40%) + Examen final (60%)",
+    'note_2_partiel': "Contrôle continu (CC2:40%) + Examen final (60%)",
+    'partiel_only': "Examen final seulement (100%)",
+    'note_1_note_2': "Deux contrôles continus (CC1:50%, CC2:50%)",
+    'note_1_only': "Premier contrôle continu seulement (100%)",
+    'note_2_only': "Deuxième contrôle continu seulement (100%)"
   };
   
   return descriptions[type] || "Type d'évaluation non spécifié";
@@ -1319,7 +1511,7 @@ exports.uploadNotes = async (req, res) => {
     // Fonction pour insérer ou mettre à jour une note dans la transaction
     const upsertNoteInTransaction = async (noteData, fichierSource, noteId = null) => {
       const validateAndFormat = (value) => {
-        if (value === null || value === undefined || value === '') {
+        if (value === null || value === undefined) {
           return null;
         }
         const num = parseFloat(value);
@@ -1400,18 +1592,19 @@ exports.uploadNotes = async (req, res) => {
         }
         
         const noteValues = {
-          note1: studentData.note_1 || 0,
-          note2: studentData.note_2 || 0,
-          partiel: studentData.partiel || 0
+          note1: studentData.note_1,  // Peut être null
+          note2: studentData.note_2,  // Peut être null
+          partiel: studentData.partiel // Peut être null
         };
         
-        // Calculer la moyenne avec la nouvelle fonction qui gère les coefficients > 15
-        const moyenne = calculerMoyenne(
-          noteValues.note1,
-          noteValues.note2,
-          noteValues.partiel,
-          matiereInfo
-        );
+        // Calculer la moyenne avec la nouvelle fonction qui gère les null et 0
+       const moyenne = calculerMoyenne(
+        noteValues.note1,
+        noteValues.note2,
+        noteValues.partiel,
+        nouveauTypeEvaluation,  // ← On passe le type directement !
+        matiereInfo.type_filiere
+      );
         
         const existingNoteId = await checkExistingNoteInTransaction(
           etudiant.id,
@@ -1439,10 +1632,10 @@ exports.uploadNotes = async (req, res) => {
         
         if (upsertResult.action === 'insert') {
           results.inserted++;
-          console.log(`  NOUVELLE note pour ${etudiant.nom} ${etudiant.prenoms}`);
+          console.log(`  NOUVELLE note pour ${etudiant.nom} ${etudiant.prenoms} (moyenne: ${moyenne})`);
         } else {
           results.updated++;
-          console.log(`🔄 Note MIS À JOUR pour ${etudiant.nom} ${etudiant.prenoms}`);
+          console.log(`🔄 Note MIS À JOUR pour ${etudiant.nom} ${etudiant.prenoms} (moyenne: ${moyenne})`);
         }
         
         results.processedCount++;
@@ -1512,7 +1705,7 @@ exports.uploadNotes = async (req, res) => {
           professeur: professeurNom,
           enseignementId: enseignementId,
           type_evaluation: nouveauTypeEvaluation,
-          description_type: matiereInfo.description_type || getDescriptionTypeEvaluation(nouveauTypeEvaluation),
+          description_type: getDescriptionTypeEvaluation(nouveauTypeEvaluation),
           stats: {
             totalTraitees: results.processedCount,
             notesInserees: results.inserted,
@@ -1662,7 +1855,8 @@ exports.downloadTemplate = async (req, res) => {
     data.push(['INSTRUCTIONS IMPORTANTES:', '', '', '', '', '']);
     data.push(['1. Ne modifiez PAS la colonne "Code" (matricule_iipea)', '', '', '', '', '']);
     data.push(['2. Utilisez la virgule pour les décimales (ex: 15,5)', '', '', '', '', '']);
-    data.push(['3. Laissez vide ou mettez 0 si note absente', '', '', '', '', '']);
+    data.push(['3. Laissez vide si l\'étudiant n\'a pas été évalué', '', '', '', '', '']);
+    data.push(['4. Mettez 0 si l\'étudiant a eu 0/20', '', '', '', '', '']);
     
     const workbook = xlsx.utils.book_new();
     const worksheet = xlsx.utils.aoa_to_sheet(data);
@@ -1727,17 +1921,17 @@ exports.getTypeEvaluation = async (req, res) => {
     const typesDescription = {
       'note_1_note_2_partiel': {
         nom: "Contrôles continus + Examen",
-        description: "CC1 (30%), CC2 (30%), Examen final (40%)",
+        description: "CC1 (20%), CC2 (20%), Examen final (60%)",
         notes_actives: ["note1", "note2", "partiel"]
       },
       'note_1_partiel': {
         nom: "CC1 + Examen",
-        description: "CC1 (30-40%), Examen final (60-70%)",
+        description: "CC1 (40%), Examen final (60%)",
         notes_actives: ["note1", "partiel"]
       },
       'note_2_partiel': {
         nom: "CC2 + Examen",
-        description: "CC2 (30-40%), Examen final (60-70%)",
+        description: "CC2 (40%), Examen final (60%)",
         notes_actives: ["note2", "partiel"]
       },
       'partiel_only': {

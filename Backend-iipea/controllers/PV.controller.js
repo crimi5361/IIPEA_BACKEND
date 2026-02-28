@@ -38,15 +38,17 @@ exports.genererPVByGroupe = async (req, res) => {
     
     const groupeInfo = groupeResult.rows[0];
     
-    // 2. Récupérer tous les étudiants du groupe
+    // 2. Récupérer tous les étudiants du groupe avec leurs informations de scolarité
     const etudiantsQuery = `
       SELECT 
-        id, matricule_iipea, nom, prenoms, groupe_id,
-        niveau_id, annee_academique_id, id_filiere
-      FROM etudiant 
-      WHERE groupe_id = $1 
-      AND standing = 'Inscrit'
-      ORDER BY nom, prenoms
+        e.id, e.matricule_iipea, e.nom, e.prenoms, e.groupe_id,
+        e.niveau_id, e.annee_academique_id, e.id_filiere,
+        s.statut_etudiant
+      FROM etudiant e
+      LEFT JOIN scolarite s ON s.id = e.scolarite_id
+      WHERE e.groupe_id = $1 
+      AND e.standing = 'Inscrit'
+      ORDER BY e.nom, e.prenoms
     `;
     
     const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
@@ -88,6 +90,9 @@ exports.genererPVByGroupe = async (req, res) => {
         uesAvecResultats
       );
       
+      // 🔴 Déterminer si l'étudiant a soldé sa scolarité (basé sur statut_etudiant)
+      const aSoldeScolarite = (etudiant.statut_etudiant || '').toUpperCase() === 'SOLDE';
+      
       resultatsEtudiants.push({
         etudiant_id: etudiant.id,
         matricule_iipea: etudiant.matricule_iipea,
@@ -97,7 +102,10 @@ exports.genererPVByGroupe = async (req, res) => {
         credits_valides: totaux.creditsValides,
         credits_total: totaux.creditsTotal,
         decision: decision,
-        ues: uesAvecResultats
+        ues: uesAvecResultats,
+        // 🔴 Ajout du statut de scolarité
+        scolarite_soldee: aSoldeScolarite,
+        statut_etudiant: etudiant.statut_etudiant || 'NON_DEFINI'
       });
     }
     
@@ -126,7 +134,12 @@ exports.genererPVByGroupe = async (req, res) => {
       statistiques: {
         total_etudiants: etudiants.length,
         total_ue: structureAcademique.ues.length,
-        total_credits_maquette: totalCreditsMaquette
+        total_credits_maquette: totalCreditsMaquette,
+        // 🔴 Ajout des statistiques de scolarité
+        statistiques_scolarite: {
+          total_solde: resultatsEtudiants.filter(e => e.scolarite_soldee).length,
+          total_non_solde: resultatsEtudiants.filter(e => !e.scolarite_soldee).length
+        }
       }
     };
     
@@ -178,15 +191,17 @@ exports.genererPVBySemestre = async (req, res) => {
     
     const groupeInfo = groupeResult.rows[0];
     
-    // 2. Récupérer tous les étudiants du groupe
+    // 2. Récupérer tous les étudiants du groupe avec leurs informations de scolarité
     const etudiantsQuery = `
       SELECT 
-        id, matricule_iipea, nom, prenoms, groupe_id,
-        niveau_id, annee_academique_id, id_filiere
-      FROM etudiant 
-      WHERE groupe_id = $1 
-      AND standing = 'Inscrit'
-      ORDER BY nom, prenoms
+        e.id, e.matricule_iipea, e.nom, e.prenoms, e.groupe_id,
+        e.niveau_id, e.annee_academique_id, e.id_filiere,
+        s.statut_etudiant
+      FROM etudiant e
+      LEFT JOIN scolarite s ON s.id = e.scolarite_id
+      WHERE e.groupe_id = $1 
+      AND e.standing = 'Inscrit'
+      ORDER BY e.nom, e.prenoms
     `;
     
     const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
@@ -228,6 +243,9 @@ exports.genererPVBySemestre = async (req, res) => {
         uesAvecResultats
       );
       
+      // 🔴 Déterminer si l'étudiant a soldé sa scolarité (basé sur statut_etudiant)
+      const aSoldeScolarite = (etudiant.statut_etudiant || '').toUpperCase() === 'SOLDE';
+      
       resultatsEtudiants.push({
         etudiant_id: etudiant.id,
         matricule_iipea: etudiant.matricule_iipea,
@@ -237,7 +255,10 @@ exports.genererPVBySemestre = async (req, res) => {
         credits_valides: totaux.creditsValides,
         credits_total: totaux.creditsTotal,
         decision: decision,
-        ues: uesAvecResultats
+        ues: uesAvecResultats,
+        // 🔴 Ajout du statut de scolarité
+        scolarite_soldee: aSoldeScolarite,
+        statut_etudiant: etudiant.statut_etudiant || 'NON_DEFINI'
       });
     }
     
@@ -269,7 +290,12 @@ exports.genererPVBySemestre = async (req, res) => {
       statistiques: {
         total_etudiants: etudiants.length,
         total_ue: structureAcademique.ues.length,
-        total_credits_maquette: totalCreditsMaquette
+        total_credits_maquette: totalCreditsMaquette,
+        // 🔴 Ajout des statistiques de scolarité
+        statistiques_scolarite: {
+          total_solde: resultatsEtudiants.filter(e => e.scolarite_soldee).length,
+          total_non_solde: resultatsEtudiants.filter(e => !e.scolarite_soldee).length
+        }
       }
     };
     
@@ -294,13 +320,15 @@ exports.genererPVByEtudiant = async (req, res) => {
     
     console.log(`🎓 Génération PV pour étudiant: ${etudiantId}`);
     
-    // 1. Récupérer l'étudiant
+    // 1. Récupérer l'étudiant avec ses informations de scolarité
     const etudiantQuery = `
       SELECT 
-        id, matricule_iipea, nom, prenoms, groupe_id,
-        niveau_id, annee_academique_id, id_filiere
-      FROM etudiant 
-      WHERE id = $1
+        e.id, e.matricule_iipea, e.nom, e.prenoms, e.groupe_id,
+        e.niveau_id, e.annee_academique_id, e.id_filiere,
+        s.statut_etudiant
+      FROM etudiant e
+      LEFT JOIN scolarite s ON s.id = e.scolarite_id
+      WHERE e.id = $1
     `;
     
     const etudiantResult = await db.query(etudiantQuery, [etudiantId]);
@@ -358,6 +386,9 @@ exports.genererPVByEtudiant = async (req, res) => {
       uesAvecResultats
     );
     
+    // 🔴 Déterminer si l'étudiant a soldé sa scolarité (basé sur statut_etudiant)
+    const aSoldeScolarite = (etudiant.statut_etudiant || '').toUpperCase() === 'SOLDE';
+    
     // 8. Structurer la réponse
     const pvEtudiant = {
       success: true,
@@ -378,6 +409,9 @@ exports.genererPVByEtudiant = async (req, res) => {
       credits_total: totaux.creditsTotal,
       decision: decision,
       ues: uesAvecResultats,
+      // 🔴 Ajout du statut de scolarité
+      scolarite_soldee: aSoldeScolarite,
+      statut_etudiant: etudiant.statut_etudiant || 'NON_DEFINI',
       date_generation: new Date().toISOString()
     };
     
@@ -525,19 +559,23 @@ const getNotesEtudiantAvecDetailsFonction = async (etudiantId, maquetteId) => {
  * Fonction pour calculer la moyenne du contrôle continu (note1 et note2)
  */
 const calculerMoyenneCC = (note1, note2) => {
-  const n1 = parseFloat(note1) || 0;
-  const n2 = parseFloat(note2) || 0;
+  const n1 = (note1 !== null && note1 !== undefined) ? parseFloat(note1) : null;
+  const n2 = (note2 !== null && note2 !== undefined) ? parseFloat(note2) : null;
+  
+  // CORRECTION: Vérifier explicitement la présence des notes
+  const aNote1 = n1 !== null;
+  const aNote2 = n2 !== null;
   
   // Si les deux notes existent
-  if (note1 && note2) {
+  if (aNote1 && aNote2) {
     return (n1 + n2) / 2;
   }
   // Si seulement note1 existe
-  else if (note1) {
+  else if (aNote1) {
     return n1;
   }
   // Si seulement note2 existe
-  else if (note2) {
+  else if (aNote2) {
     return n2;
   }
   // Aucune note
@@ -551,9 +589,10 @@ const calculerMoyenneMatiere = (note1, note2, partiel, typeFiliere) => {
   // Pour les filières professionnelles, partiel est considéré comme une note de classe supplémentaire
   if (typeFiliere === 'Professionnelles' || typeFiliere === 'professionnelles') {
     const notes = [];
-    if (note1) notes.push(parseFloat(note1));
-    if (note2) notes.push(parseFloat(note2));
-    if (partiel) notes.push(parseFloat(partiel));
+    
+    if (note1 !== null && note1 !== undefined) notes.push(parseFloat(note1));
+    if (note2 !== null && note2 !== undefined) notes.push(parseFloat(note2));
+    if (partiel !== null && partiel !== undefined) notes.push(parseFloat(partiel));
     
     if (notes.length === 0) return null;
     
@@ -564,7 +603,7 @@ const calculerMoyenneMatiere = (note1, note2, partiel, typeFiliere) => {
   // Pour les filières universitaires, calcul standard avec CC et examen
   else {
     const moyenneCC = calculerMoyenneCC(note1, note2);
-    const noteExamen = partiel ? parseFloat(partiel) : null;
+    const noteExamen = (partiel !== null && partiel !== undefined) ? parseFloat(partiel) : null;
     
     if (moyenneCC && noteExamen) {
       // Formule à adapter selon vos règles (ex: 40% CC + 60% Examen)
@@ -592,10 +631,11 @@ const calculerResultatsUEAvecDetailsFonction = async (ue, notes, typeFiliere) =>
       coefficient: parseFloat(note.coefficient) || 1,
       statut: note.statut,
       enseignement_id: note.enseignement_id,
-      note1: note.note1 ? parseFloat(note.note1) : null,
-      note2: note.note2 ? parseFloat(note.note2) : null,
-      moyenne_cc: moyenneCC,
-      partiel: note.partiel ? parseFloat(note.partiel) : null
+      // CORRECTION IMPORTANTE: Préserver la valeur 0
+      note1: (note.note1 !== null && note.note1 !== undefined) ? parseFloat(note.note1) : null,
+      note2: (note.note2 !== null && note.note2 !== undefined) ? parseFloat(note.note2) : null,
+      moyenne_cc: moyenneCC, // Garder la valeur même si 0
+      partiel: (note.partiel !== null && note.partiel !== undefined) ? parseFloat(note.partiel) : null
     });
   });
   
@@ -613,14 +653,19 @@ const calculerResultatsUEAvecDetailsFonction = async (ue, notes, typeFiliere) =>
       valide: valide,
       a_note: !!note,
       enseignement_id: note?.enseignement_id || null,
-      // Détails des notes
-      note1: note?.note1 || null,
-      note2: note?.note2 || null,
-      moyenne_cc: note?.moyenne_cc || null,
-      partiel: note?.partiel || null,
+      // Détails des notes - CORRECTION: Garder la valeur 0
+      note1: note?.note1 !== null && note?.note1 !== undefined ? note.note1 : null,
+      note2: note?.note2 !== null && note?.note2 !== undefined ? note.note2 : null,
+      moyenne_cc: note?.moyenne_cc !== null && note?.moyenne_cc !== undefined ? note.moyenne_cc : null,
+      partiel: note?.partiel !== null && note?.partiel !== undefined ? note.partiel : null,
       // Pour les filières professionnelles, on peut calculer une moyenne alternative
       moyenne_pro: typeFiliere === 'Professionnelles' || typeFiliere === 'professionnelles' 
-        ? calculerMoyenneMatiere(note?.note1, note?.note2, note?.partiel, typeFiliere)
+        ? calculerMoyenneMatiere(
+            note?.note1 !== null && note?.note1 !== undefined ? note.note1 : null,
+            note?.note2 !== null && note?.note2 !== undefined ? note.note2 : null,
+            note?.partiel !== null && note?.partiel !== undefined ? note.partiel : null,
+            typeFiliere
+          )
         : null
     };
   });
@@ -796,15 +841,17 @@ exports.afficherPVPage = async (req, res) => {
         
         const groupeInfo = groupeResult.rows[0];
         
-        // 2. Récupérer tous les étudiants du groupe
+        // 2. Récupérer tous les étudiants du groupe avec leurs informations de scolarité
         const etudiantsQuery = `
             SELECT 
-                id, matricule_iipea, nom, prenoms, groupe_id,
-                niveau_id, annee_academique_id, id_filiere
-            FROM etudiant 
-            WHERE groupe_id = $1 
-            AND standing = 'Inscrit'
-            ORDER BY nom, prenoms
+                e.id, e.matricule_iipea, e.nom, e.prenoms, e.groupe_id,
+                e.niveau_id, e.annee_academique_id, e.id_filiere,
+                s.statut_etudiant
+            FROM etudiant e
+            LEFT JOIN scolarite s ON s.id = e.scolarite_id
+            WHERE e.groupe_id = $1 
+            AND e.standing = 'Inscrit'
+            ORDER BY e.nom, e.prenoms
         `;
         
         const etudiantsResult = await db.query(etudiantsQuery, [groupeId]);
@@ -846,6 +893,9 @@ exports.afficherPVPage = async (req, res) => {
                 uesAvecResultats
             );
             
+            // 🔴 Déterminer si l'étudiant a soldé sa scolarité (basé sur statut_etudiant)
+            const aSoldeScolarite = (etudiant.statut_etudiant || '').toUpperCase() === 'SOLDE';
+            
             resultatsEtudiants.push({
                 etudiant_id: etudiant.id,
                 matricule_iipea: etudiant.matricule_iipea,
@@ -855,7 +905,10 @@ exports.afficherPVPage = async (req, res) => {
                 credits_valides: totaux.creditsValides,
                 credits_total: totaux.creditsTotal,
                 decision: decision,
-                ues: uesAvecResultats
+                ues: uesAvecResultats,
+                // 🔴 Ajout du statut de scolarité
+                scolarite_soldee: aSoldeScolarite,
+                statut_etudiant: etudiant.statut_etudiant || 'NON_DEFINI'
             });
         }
         
@@ -887,7 +940,12 @@ exports.afficherPVPage = async (req, res) => {
             statistiques: {
                 total_etudiants: etudiants.length,
                 total_ue: structureAcademique.ues.length,
-                total_credits_maquette: totalCreditsMaquette
+                total_credits_maquette: totalCreditsMaquette,
+                // 🔴 Ajout des statistiques de scolarité
+                statistiques_scolarite: {
+                    total_solde: resultatsEtudiants.filter(e => e.scolarite_soldee).length,
+                    total_non_solde: resultatsEtudiants.filter(e => !e.scolarite_soldee).length
+                }
             }
         };
         
